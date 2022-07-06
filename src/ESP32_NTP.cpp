@@ -13,6 +13,7 @@
  * 
  */
 
+#include <Arduino.h>
 #include <SPI.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
@@ -25,6 +26,14 @@ byte packetBuffer[NTP_PACKET_SIZE];	// Buffer for both incoming and outgoing pac
 
 // A UDP instance to let us send and receive packets over UDP.
 EthernetUDP Udp;
+
+
+
+void WizReset();
+void prt_hwval(uint8_t refval);
+void prt_ethval(uint8_t refval);
+void sendNTPpacket(const char *address);
+
 
 
 /*
