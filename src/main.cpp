@@ -1,24 +1,25 @@
 /*
- *   $Id: ESP32_NTP.ino,v 1.8 2019/04/04 04:48:23 gaijin Exp $
+ * Norvi IIoT Signal Lights
  *
- *  UDP NTP client example program.
+ * Using W5500 Ethernet chip, 
+ * eModbus library: https://github.com/eModbus/eModbus/blob/7a5f8877e5ee426ae8eca634e96ec1dfd5724209/examples/TCPEthernetServer/main.cpp
  * 
- *  Get the time from a Network Time Protocol (NTP) time server
- *  Demonstrates use of UDP sendPacket and ReceivePacket
  * 
- *  Created:  04 Sep 2010 by Michael Margolis
- *  Modified: 09 Apr 2012 by Tom Igoe
- *  Modified: 02 Sep 2015 by Arturo Guadalupi
- *  Munged:   04 Apr 2019 by PuceBaboon (for the ESP32 with a W5500 module)
+ * Important: To get it working, line 28 of ~/.platformio/packages/framework-arduinoespressif32/cores/esp32/Server.h 
+ * had to be changed from `virtual void begin(uint16_t port=0) =0;` 
+ * to `virtual void begin() =0;`
  * 
  */
 
 #include <Arduino.h>
 #include <SPI.h>
 #include <Ethernet.h>
-#include <ArduinoModbus.h>
+// #include <ArduinoModbus.h>
 #include "local_config.h"   // <--- Change settings for YOUR network here.
 
+
+// Modbus server TCP
+#include "ModbusServerEthernet.h"
 
 /* 
  * GPIO config for signal lights
@@ -30,22 +31,9 @@ const int GPIO_BUZZER = 13;
 
 
 
-
-/* 
- * ModbusTCP setup
- */ 
-EthernetServer EthServer(502);
-EthernetClient clients[4];
-ModbusTCPServer ModbusTCPServer;
-uint16_t adc0;
-uint16_t adc0_result;
-uint16_t test;
-
-
 void WizReset();
 void prt_hwval(uint8_t refval);
 void prt_ethval(uint8_t refval);
-void sendNTPpacket(const char *address);
 
 /*
  * Wiz W5500 reset function.  Change this for the specific reset
@@ -154,53 +142,113 @@ void checkConnection() {
         }
     }
     if (rdy_flag == false) {
-        Serial.println
-            ("\n\r\tHardware fault, or cable problem... cannot continue.");
+        Serial.println("\n\r\tHardware fault, or cable problem... cannot continue.");
         Serial.print("Hardware Status: ");
         prt_hwval(Ethernet.hardwareStatus());
         Serial.print("   Cable Status: ");
         prt_ethval(Ethernet.linkStatus());
-        while (true) {
-            delay(10);          // Halt.
+        for (uint8_t i = 0; i < 50; i++) {
+            delay(100);          // Halt.
         }
+        Serial.println("Resetting");
+        ESP.restart();          // Try reboot
     } else {
         Serial.println(" OK");
     }
 }
 
-void setupModbus() {
-    Serial.println("Setting up ModbusTCP ...");
-
-    EthServer.begin();
-    ModbusTCPServer.configureHoldingRegisters(0x00, 100);
-    ModbusTCPServer.begin();
-
-    test = 110;
+void setupSignalLights() {
+  pinMode(GPIO_GREEN, OUTPUT);
+  pinMode(GPIO_YELLOW, OUTPUT);
+  pinMode(GPIO_RED, OUTPUT);
+  pinMode(GPIO_BUZZER, OUTPUT);
 }
 
-void updateREG()  {
-  //adc0 = ads.readADC_SingleEnded(1);
-  ModbusTCPServer.holdingRegisterWrite(0x00, test);
-  adc0_result = ModbusTCPServer.holdingRegisterRead(0x00);
-  Serial.print("AIN0: "); 
-  Serial.println(adc0_result);
-  Serial.println(" ");
+void blink(int gpio_pin, int duration=300, int pause=150) {
+  digitalWrite(gpio_pin, HIGH);
+  delay(duration);
+  digitalWrite(gpio_pin, LOW);
+  delay(pause);     
 }
 
-void handleModbus() {
-    // Modbus server accept incoming connections
-    EthernetClient client = EthServer.available();
-    if (client) {
-        Serial.println("New client");
-        ModbusTCPServer.accept(client);
-        while (client.connected()) {
-            ModbusTCPServer.poll();
-            updateREG();      
-        }
+void testSignalLights() {
+  blink(GPIO_GREEN);   
+  blink(GPIO_YELLOW);   
+  blink(GPIO_RED);   
+  blink(GPIO_BUZZER);   
+}
+
+/** MODBUS SERVER **/
+
+// Create server
+ModbusServerEthernet MBserver;
+
+uint16_t memo[32];                     // Test server memory: 32 words
+
+// Server function to handle FC 0x03 and 0x04
+ModbusMessage FC03(ModbusMessage request)
+{
+  Serial.println(request);
+  ModbusMessage response; // The Modbus message we are going to give back
+  uint16_t addr = 0;      // Start address
+  uint16_t words = 0;     // # of words requested
+  request.get(2, addr);   // read address from request
+  request.get(4, words);  // read # of words from request
+
+  // Address overflow?
+  if ((addr + words) > 20) {
+    // Yes - send respective error response
+    response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
+  }
+  // Set up response
+  response.add(request.getServerID(), request.getFunctionCode(), (uint8_t)(words * 2));
+  // Request for FC 0x03?
+  if (request.getFunctionCode() == READ_HOLD_REGISTER) {
+    // Yes. Complete response
+    for (uint8_t i = 0; i < words; ++i) {
+      // send increasing data values
+      response.add((uint16_t)(memo[addr + i]));
+    }
+  } else {
+    // No, this is for FC 0x04. Response is random
+    for (uint8_t i = 0; i < words; ++i) {
+      // send increasing data values
+      response.add((uint16_t)random(1, 65535));
+    }
+  }
+  // Send response back
+  return response;
+}
+
+void setupAsyncModbusServer() {
+
+    Serial.println("Setting up ModbusTCP server ...");
+
+    // Set up test memory
+    for (uint16_t i = 0; i < 32; ++i) {
+        memo[i] = 100 + i;
+    }
+    
+    // Now set up the server for some function codes
+    // MBserver.registerWorker(1, READ_HOLD_REGISTER, &FC03);      // FC=03 for serverID=1
+    // MBserver.registerWorker(2, READ_HOLD_REGISTER, &FC03);      // FC=03 for serverID=2
+    MBserver.registerWorker(1, READ_INPUT_REGISTER, &FC03);     // FC=04 for serverID=1
+    
+    
+    // Start the server
+    MBserver.start(502, 2, 20000);
+}
+
+void modbusLoop() {
+    static uint32_t lastMillis = 0;
+
+    if (millis() - lastMillis > 5000) {
+        lastMillis = millis();
+        Serial.printf("Millis: %10d - free heap: %d\n", lastMillis, ESP.getFreeHeap());
     }
 }
 
-
+/** MODBUS SERVER END **/
 
 void setup() {
     Serial.begin(115200);
@@ -229,12 +277,17 @@ void setup() {
 
     checkConnection();
 
-    setupModbus();
 
+    setupAsyncModbusServer();
+
+
+    setupSignalLights();
+    testSignalLights();
 
     Serial.println("Setup done.");
 }
 
 void loop() {
-    handleModbus();
+    modbusLoop();
+    checkConnection();
 }
