@@ -1,0 +1,151 @@
+#include <Arduino.h>
+#include <WiFi.h>
+#include <ETH.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include "driver/spi_master.h"
+#include <SPI.h>
+
+/* 
+ * GPIO config for W5500: 
+ */
+const int GPIO_MISO = 19;
+const int GPIO_MOSI = 23;
+const int GPIO_SCLK = 18;
+const int GPIO_SCS = 5;
+const int GPIO_INT = 22;
+const int GPIO_RESET = -1;
+
+/* 
+ * GPIO config for signal lights
+ */ 
+const int GPIO_GREEN = 2;
+const int GPIO_YELLOW = 4;
+const int GPIO_RED = 12;
+const int GPIO_BUZZER = 13;
+
+
+AsyncWebServer server(80);
+
+bool setupW5500() {
+
+  WiFi.begin();
+  tcpip_adapter_set_default_eth_handlers();
+
+  // Initialize TCP/IP network interface (should be called only once in application)
+  ESP_ERROR_CHECK(esp_netif_init());
+  esp_netif_config_t cfg = ESP_NETIF_DEFAULT_ETH();
+  esp_netif_t *eth_netif = esp_netif_new(&cfg);
+
+  // Set default handlers to process TCP/IP, deprecated
+  // ESP_ERROR_CHECK(esp_eth_set_default_handlers(eth_netif));
+    
+  esp_eth_mac_t *eth_mac = NULL;
+  esp_eth_phy_t *eth_phy = NULL;
+
+  gpio_install_isr_service(0);
+
+  spi_bus_config_t buscfg = {
+    .mosi_io_num = GPIO_MOSI,
+    .miso_io_num = GPIO_MISO,
+    .sclk_io_num = GPIO_SCLK,
+    .quadwp_io_num = -1,
+    .quadhd_io_num = -1,
+  };
+  ESP_ERROR_CHECK(spi_bus_initialize(SPI3_HOST, &buscfg, 1));
+
+  spi_device_handle_t spi_handle = NULL;
+  spi_device_interface_config_t devcfg = {
+      .command_bits = 16,   // Address phase in W5500 SPI frame
+      .address_bits = 8,    // Control phase in W5500 SPI frame
+      .mode = 0,
+      .clock_speed_hz = 12 * 1000 * 1000,
+      .spics_io_num = GPIO_SCS,
+      .queue_size = 20
+  };
+  ESP_ERROR_CHECK(spi_bus_add_device(SPI3_HOST, &devcfg, &spi_handle));
+
+  /* W5500 ethernet driver uses spi driver */
+  eth_w5500_config_t w5500_config = ETH_W5500_DEFAULT_CONFIG(spi_handle);
+  w5500_config.int_gpio_num = GPIO_INT;
+
+  eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();
+  eth_phy_config_t phy_config = ETH_PHY_DEFAULT_CONFIG();
+  phy_config.reset_gpio_num = GPIO_RESET;
+
+  eth_mac = esp_eth_mac_new_w5500(&w5500_config, &mac_config);
+  if(eth_mac == NULL){
+    log_e("esp_eth_mac_new_esp32 failed");
+    return false;
+  }
+
+  eth_phy = esp_eth_phy_new_w5500(&phy_config);
+  if(eth_phy == NULL){
+    log_e("esp_eth_phy_new failed");
+    return false;
+  }
+    
+  esp_eth_config_t eth_config = ETH_DEFAULT_CONFIG(eth_mac, eth_phy);
+  esp_eth_handle_t eth_handle = NULL;
+  ESP_ERROR_CHECK(esp_eth_driver_install(&eth_config, &eth_handle));
+
+  uint8_t macArr[] = { 0x02, 0x00, 0x00, 0x12, 0x34, 0x56 };
+  ESP_ERROR_CHECK(esp_eth_ioctl(eth_handle, ETH_CMD_S_MAC_ADDR, macArr));
+
+  /* Attach Ethernet driver to TCP/IP stack */
+  ESP_ERROR_CHECK(esp_netif_attach(eth_netif, esp_eth_new_netif_glue(eth_handle)));
+
+  /* Start Ethernet driver state machine */
+  ESP_ERROR_CHECK(esp_eth_start(eth_handle));
+
+  return true;
+}
+
+void setupWebserver() {
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+      request->send(200, "text/plain", "Hello world");
+  });
+  server.onNotFound([](AsyncWebServerRequest *request){ 
+    request->send(404, "text/plain", "Not found");
+  });
+  server.begin();
+}
+
+void setupSignalLights() {
+  pinMode(GPIO_GREEN, OUTPUT);
+  pinMode(GPIO_YELLOW, OUTPUT);
+  pinMode(GPIO_RED, OUTPUT);
+  pinMode(GPIO_BUZZER, OUTPUT);
+}
+
+void blink(int gpio_pin, int duration=300, int pause=150) {
+  digitalWrite(gpio_pin, HIGH);
+  delay(duration);
+  digitalWrite(gpio_pin, LOW);
+  delay(pause);     
+}
+
+void testSignalLights() {
+  blink(GPIO_GREEN);   
+  blink(GPIO_YELLOW);   
+  blink(GPIO_RED);   
+  blink(GPIO_BUZZER);   
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  Serial.println("Setting up W5500 Ethernet");
+  setupW5500();
+
+  Serial.println("Setting up webserver");
+  setupWebserver();
+
+  Serial.println("SEtting up signal lights");
+  setupSignalLights();
+
+  Serial.println("Testing signal lights");
+  testSignalLights();
+}
+
+void loop() {}
