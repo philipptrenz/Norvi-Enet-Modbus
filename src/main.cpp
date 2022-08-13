@@ -172,6 +172,31 @@ void checkConnection() {
     }
 }
 
+
+bool wasOffline = false;
+void checkConnectionLoop() {
+
+    // Red BLINKING_SLOW when connection is lost
+    if ((Ethernet.hardwareStatus() == EthernetNoHardware) || (Ethernet.linkStatus() == LinkOFF)) {
+        if (!wasOffline) Serial.println("Lost network connection");
+
+        wasOffline = true;
+        registerStates[0] = OFF;  // GREEN
+        registerStates[1] = OFF;  // YELLOW
+        registerStates[2] = BLINKING_SLOW;  // RED
+        registerStates[3] = OFF;  // BUZZER
+    } else if (wasOffline) {
+        Serial.print("Network connection restored, Ethernet IP is: ");
+        Serial.println(Ethernet.localIP());
+
+        wasOffline = false;
+        registerStates[0] = OFF;  // GREEN
+        registerStates[1] = OFF;  // YELLOW
+        registerStates[2] = OFF;  // RED
+        registerStates[3] = OFF;  // BUZZER
+    }
+}
+
 void setupSignalLights() {
     for (int i = 0; i < numRegisters; i++) {
         pinMode(gpioPorts[i], OUTPUT);
@@ -232,7 +257,6 @@ void signalLightsLoop() {
 // Create server
 ModbusServerEthernet MBserver;
 
-// Server function to handle FC 0x03 and 0x04
 ModbusMessage HANDLE_READ_HOLD_REGISTER(ModbusMessage request) {
     // Serial.println(request);
     ModbusMessage response; // The Modbus message we are going to give back
@@ -261,7 +285,6 @@ ModbusMessage HANDLE_READ_HOLD_REGISTER(ModbusMessage request) {
     return response;
 }
 
-// Server function to handle FC 0x03 and 0x04
 ModbusMessage HANDLE_WRITE_HOLD_REGISTER(ModbusMessage request) {
     // Serial.println(request);
     ModbusMessage response; // The Modbus message we are going to give back
@@ -271,13 +294,13 @@ ModbusMessage HANDLE_WRITE_HOLD_REGISTER(ModbusMessage request) {
     request.get(4, value);  // read received value
 
     // Address overflow?
-    if ((addr) > numRegisters) {
+    if (addr > numRegisters) {
         // Yes - send respective error response
         response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
     }
 
     // Set up response
-    response.add(request.getServerID(), request.getFunctionCode(), (uint8_t)(0));
+    response.add(request.getServerID(), request.getFunctionCode(), (uint16_t)(addr));
 
     if (request.getFunctionCode() == WRITE_HOLD_REGISTER) {
 
@@ -285,7 +308,7 @@ ModbusMessage HANDLE_WRITE_HOLD_REGISTER(ModbusMessage request) {
 
             RegisterStatus newValue = static_cast<RegisterStatus>(value);
 
-            Serial.print("Changing value of holding register ");
+            Serial.print("WRITE_HOLD_REGISTER: Changing value of holding register ");
             Serial.print(addr);
             Serial.print(" from ");
             Serial.print(registerStates[addr]);
@@ -303,6 +326,51 @@ ModbusMessage HANDLE_WRITE_HOLD_REGISTER(ModbusMessage request) {
     return response;
 }
 
+ModbusMessage HANDLE_WRITE_MULT_REGISTERS(ModbusMessage request) {
+    // Serial.println(request);
+    ModbusMessage response; // The Modbus message we are going to give back
+    uint16_t addr = 0;      // Start address
+    uint16_t quantity = 0;     // Quantity of registers
+    uint16_t byteCount = 0;     // Byte count
+    request.get(2, addr);
+    request.get(4, quantity);
+    request.get(5, byteCount);
+
+
+    // Address overflow?
+    if ((addr+quantity) > numRegisters) {
+        // Yes - send respective error response
+        response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
+    }
+
+    // Set up response
+    response.add(request.getServerID(), request.getFunctionCode(), (uint16_t)(addr), (uint16_t)(quantity));
+
+    if (request.getFunctionCode() == WRITE_MULT_REGISTERS) {
+
+        for (int i = 0; i < quantity; i++) {
+
+            uint16_t value = request.get(7+(2*i));
+
+            if (value >= 0 && value <= 3) {
+
+                RegisterStatus newValue = static_cast<RegisterStatus>(value);
+
+                Serial.print("WRITE_MULT_REGISTERS: Changing value of holding register ");
+                Serial.print(addr);
+                Serial.print(" from ");
+                Serial.print(registerStates[addr]);
+                Serial.print(" to ");
+                Serial.println(newValue);
+
+                registerStates[addr] = newValue;
+            }
+        }
+    }
+
+    return response;
+}
+
 void setupAsyncModbusServer() {
 
     Serial.println("Setting up ModbusTCP server ...");
@@ -310,10 +378,10 @@ void setupAsyncModbusServer() {
     // Now set up the server for some function codes
     MBserver.registerWorker(1, READ_HOLD_REGISTER, &HANDLE_READ_HOLD_REGISTER);      // FC=03 for serverID=1
     MBserver.registerWorker(1, WRITE_HOLD_REGISTER, &HANDLE_WRITE_HOLD_REGISTER);      // FC=03 for serverID=1
+    MBserver.registerWorker(1, WRITE_MULT_REGISTERS, &HANDLE_WRITE_MULT_REGISTERS);      // FC=03 for serverID=1
     
-    //MBserver.registerWorker(1, READ_INPUT_REGISTER, &FC03);     // FC=04 for serverID=1
+    // MBserver.registerWorker(1, READ_INPUT_REGISTER, &FC03);     // FC=04 for serverID=1
     // MBserver.registerWorker(2, READ_HOLD_REGISTER, &FC03);      // FC=03 for serverID=2
-    
     
     // Start the server
     MBserver.start(502, 2, 20000);
@@ -357,9 +425,7 @@ void setup() {
 
     checkConnection();
 
-
     setupAsyncModbusServer();
-
 
     setupSignalLights();
     testSignalLights();
@@ -369,5 +435,7 @@ void setup() {
 
 void loop() {
     modbusLoop();
+    checkConnectionLoop();
     signalLightsLoop();
+    
 }
