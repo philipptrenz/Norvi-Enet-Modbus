@@ -14,21 +14,37 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <Ethernet.h>
-// #include <ArduinoModbus.h>
 #include "local_config.h"   // <--- Change settings for YOUR network here.
 
 
 // Modbus server TCP
 #include "ModbusServerEthernet.h"
 
-/* 
- * GPIO config for signal lights
- */ 
-const int GPIO_GREEN = 2;
-const int GPIO_YELLOW = 4;
-const int GPIO_RED = 12;
-const int GPIO_BUZZER = 13;
 
+
+
+const int gpioPorts[] = {
+    2,      // GREEN
+    4,      // YELLOW
+    12,     // RED
+    13,     // BUZZER
+};
+
+const int numRegisters = 4;
+
+enum RegisterStatus: uint16_t { 
+    OFF = 0, 
+    ON = 1, 
+    BLINKING_SLOW = 2, 
+    BLINKING_FAST = 3 
+};
+
+RegisterStatus registerStates[] = {
+    OFF,
+    OFF,
+    OFF,
+    OFF
+};
 
 
 void WizReset();
@@ -90,8 +106,7 @@ void prt_hwval(uint8_t refval) {
         Serial.println("WizNet W5500 detected.");
         break;
     default:
-        Serial.println
-            ("UNKNOWN - Update espnow_gw.ino to match Ethernet.h");
+        Serial.println("UNKNOWN - Update espnow_gw.ino to match Ethernet.h");
     }
 }
 
@@ -158,24 +173,58 @@ void checkConnection() {
 }
 
 void setupSignalLights() {
-  pinMode(GPIO_GREEN, OUTPUT);
-  pinMode(GPIO_YELLOW, OUTPUT);
-  pinMode(GPIO_RED, OUTPUT);
-  pinMode(GPIO_BUZZER, OUTPUT);
+    for (int i = 0; i < numRegisters; i++) {
+        pinMode(gpioPorts[i], OUTPUT);
+    }
 }
 
 void blink(int gpio_pin, int duration=300, int pause=150) {
-  digitalWrite(gpio_pin, HIGH);
-  delay(duration);
-  digitalWrite(gpio_pin, LOW);
-  delay(pause);     
+    digitalWrite(gpio_pin, HIGH);
+    delay(duration);
+    digitalWrite(gpio_pin, LOW);
+    delay(pause);     
 }
 
 void testSignalLights() {
-  blink(GPIO_GREEN);   
-  blink(GPIO_YELLOW);   
-  blink(GPIO_RED);   
-  blink(GPIO_BUZZER);   
+    for (int i = 0; i < numRegisters; i++) {
+        blink(gpioPorts[i]);
+    }
+}
+
+bool blinkingStateSlow = true;
+bool blinkingStateFast = true;
+
+void signalLightsLoop() {
+
+    static uint32_t lastMillisSlow = 0;
+    if (millis() - lastMillisSlow > 1200) {
+        blinkingStateSlow = !blinkingStateSlow;
+        lastMillisSlow = millis();
+    }
+
+    static uint32_t lastMillisFast = 0;
+    if (millis() - lastMillisFast > 300) {
+        blinkingStateFast = !blinkingStateFast;
+        lastMillisFast = millis();
+    }    
+
+    for (int i = 0; i < numRegisters; i++) {
+
+        switch (registerStates[i]) {
+            case OFF:
+                digitalWrite(gpioPorts[i], LOW);
+                break;
+            case ON:
+                digitalWrite(gpioPorts[i], HIGH);
+                break;
+            case BLINKING_SLOW:
+                digitalWrite(gpioPorts[i], blinkingStateSlow ? HIGH : LOW);
+                break;
+            case BLINKING_FAST:
+                digitalWrite(gpioPorts[i], blinkingStateFast ? HIGH : LOW);
+                break;
+        }
+    }
 }
 
 /** MODBUS SERVER **/
@@ -183,56 +232,87 @@ void testSignalLights() {
 // Create server
 ModbusServerEthernet MBserver;
 
-uint16_t memo[32];                     // Test server memory: 32 words
+// Server function to handle FC 0x03 and 0x04
+ModbusMessage HANDLE_READ_HOLD_REGISTER(ModbusMessage request) {
+    // Serial.println(request);
+    ModbusMessage response; // The Modbus message we are going to give back
+    uint16_t addr = 0;      // Start address
+    uint16_t words = 0;     // # of words requested
+    request.get(2, addr);   // read address from request
+    request.get(4, words);  // read # of words from request
+
+    // Address overflow?
+    if ((addr + words) > numRegisters) {
+        // Yes - send respective error response
+        response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
+    }
+
+    // Set up response
+    response.add(request.getServerID(), request.getFunctionCode(), (uint8_t)(words * 2));
+
+    if (request.getFunctionCode() == READ_HOLD_REGISTER) {
+        for (uint8_t i = 0; i < words; ++i) {
+            response.add(
+                (uint16_t)(registerStates[addr+i])
+            );
+        }
+    }
+
+    return response;
+}
 
 // Server function to handle FC 0x03 and 0x04
-ModbusMessage FC03(ModbusMessage request)
-{
-  Serial.println(request);
-  ModbusMessage response; // The Modbus message we are going to give back
-  uint16_t addr = 0;      // Start address
-  uint16_t words = 0;     // # of words requested
-  request.get(2, addr);   // read address from request
-  request.get(4, words);  // read # of words from request
+ModbusMessage HANDLE_WRITE_HOLD_REGISTER(ModbusMessage request) {
+    // Serial.println(request);
+    ModbusMessage response; // The Modbus message we are going to give back
+    uint16_t addr = 0;      // Start address
+    uint16_t value = 0;     // Register value
+    request.get(2, addr);   // read address from request
+    request.get(4, value);  // read received value
 
-  // Address overflow?
-  if ((addr + words) > 20) {
-    // Yes - send respective error response
-    response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
-  }
-  // Set up response
-  response.add(request.getServerID(), request.getFunctionCode(), (uint8_t)(words * 2));
-  // Request for FC 0x03?
-  if (request.getFunctionCode() == READ_HOLD_REGISTER) {
-    // Yes. Complete response
-    for (uint8_t i = 0; i < words; ++i) {
-      // send increasing data values
-      response.add((uint16_t)(memo[addr + i]));
+    // Address overflow?
+    if ((addr) > numRegisters) {
+        // Yes - send respective error response
+        response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
     }
-  } else {
-    // No, this is for FC 0x04. Response is random
-    for (uint8_t i = 0; i < words; ++i) {
-      // send increasing data values
-      response.add((uint16_t)random(1, 65535));
+
+    // Set up response
+    response.add(request.getServerID(), request.getFunctionCode(), (uint8_t)(0));
+
+    if (request.getFunctionCode() == WRITE_HOLD_REGISTER) {
+
+        if (value >= 0 && value <= 3) {
+
+            RegisterStatus newValue = static_cast<RegisterStatus>(value);
+
+            Serial.print("Changing value of holding register ");
+            Serial.print(addr);
+            Serial.print(" from ");
+            Serial.print(registerStates[addr]);
+            Serial.print(" to ");
+            Serial.println(newValue);
+
+            registerStates[addr] = newValue;
+        }
+
+        response.add(
+            (uint16_t)(registerStates[addr])
+        );
     }
-  }
-  // Send response back
-  return response;
+
+    return response;
 }
 
 void setupAsyncModbusServer() {
 
     Serial.println("Setting up ModbusTCP server ...");
-
-    // Set up test memory
-    for (uint16_t i = 0; i < 32; ++i) {
-        memo[i] = 100 + i;
-    }
     
     // Now set up the server for some function codes
-    // MBserver.registerWorker(1, READ_HOLD_REGISTER, &FC03);      // FC=03 for serverID=1
+    MBserver.registerWorker(1, READ_HOLD_REGISTER, &HANDLE_READ_HOLD_REGISTER);      // FC=03 for serverID=1
+    MBserver.registerWorker(1, WRITE_HOLD_REGISTER, &HANDLE_WRITE_HOLD_REGISTER);      // FC=03 for serverID=1
+    
+    //MBserver.registerWorker(1, READ_INPUT_REGISTER, &FC03);     // FC=04 for serverID=1
     // MBserver.registerWorker(2, READ_HOLD_REGISTER, &FC03);      // FC=03 for serverID=2
-    MBserver.registerWorker(1, READ_INPUT_REGISTER, &FC03);     // FC=04 for serverID=1
     
     
     // Start the server
@@ -289,5 +369,5 @@ void setup() {
 
 void loop() {
     modbusLoop();
-    checkConnection();
+    signalLightsLoop();
 }
