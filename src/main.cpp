@@ -406,7 +406,7 @@ ModbusMessage HANDLE_WRITE_HOLD_REGISTER(ModbusMessage request) {
 
             RegisterStatus newValue = static_cast<RegisterStatus>(value);
 
-            Serial.print("WRITE_HOLD_REGISTER: Changing value of holding register ");
+            Serial.print("WRITE_HOLD_REGISTER: Changing holding register ");
             Serial.print(addr);
             Serial.print(" from ");
             Serial.print(holdingRegisterStates[addr]);
@@ -454,7 +454,7 @@ ModbusMessage HANDLE_WRITE_MULT_REGISTERS(ModbusMessage request) {
 
                 RegisterStatus newValue = static_cast<RegisterStatus>(value);
 
-                Serial.print("WRITE_MULT_REGISTERS: Changing value of holding register ");
+                Serial.print("WRITE_MULT_REGISTERS: Changing holding register ");
                 Serial.print(addr);
                 Serial.print(" from ");
                 Serial.print(holdingRegisterStates[addr]);
