@@ -205,7 +205,7 @@ void checkConnectionLoop() {
 
     bool isOffline = (Ethernet.hardwareStatus() == EthernetNoHardware) || (Ethernet.linkStatus() == LinkOFF);
     bool isIPvalid = Ethernet.localIP() != IPAddress(0,0,0,0);
-    bool isInTimeout = wasOffline && millis() - lastMillis > 10 * 1000;     // greater than 10 seconds
+    bool isInTimeout = wasOffline && millis() - lastMillis > 5 * 1000;     // greater than 5 seconds
     // Red BLINKING_SLOW when connection is lost
     if (isOffline && !isInTimeout) {
         if (!wasOffline) {
@@ -223,15 +223,15 @@ void checkConnectionLoop() {
         Serial.print("Network restored, Ethernet IP is: ");
         Serial.println(Ethernet.localIP());
 
-        holdingRegisterStates[0] = OFF;  // GREEN
-        holdingRegisterStates[1] = OFF;  // YELLOW
-        holdingRegisterStates[2] = OFF;  // RED
-        holdingRegisterStates[3] = OFF;  // BUZZER
+        holdingRegisterStates[0] = OFF;             // GREEN
+        holdingRegisterStates[1] = OFF;             // YELLOW
+        holdingRegisterStates[2] = OFF;             // RED
+        holdingRegisterStates[3] = OFF;             // BUZZER
 
         wasOffline = false;
         lastMillis = 0;
     } else if (isInTimeout) {
-        if (millis() - lastMillis <= 60 * 1000) {   // less than one minute
+        if (millis() - lastMillis <= 39 * 1000) {   // less than 30 seconds
             Serial.println("Network still lost, resetting W5500 ethernet connection ...");
             WizReset();
             Ethernet.begin(eth_MAC, eth_IP, eth_DNS, eth_GW, eth_MASK);
