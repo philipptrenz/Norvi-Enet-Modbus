@@ -1,5 +1,5 @@
 /*
- * Norvi IIoT Signal Lights
+ * Norvi ENET Signal Lights
  *
  * Using W5500 Ethernet chip, 
  * eModbus library: https://github.com/eModbus/eModbus/blob/7a5f8877e5ee426ae8eca634e96ec1dfd5724209/examples/TCPEthernetServer/main.cpp
@@ -14,23 +14,14 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <Ethernet.h>
+#include <ArduinoOTA.h>
+
 #include "local_config.h"   // <--- Change settings for YOUR network here.
 
 
 // Modbus server TCP
 #include "ModbusServerEthernet.h"
 
-
-
-
-const int gpioPorts[] = {
-    2,      // GREEN
-    4,      // YELLOW
-    12,     // RED
-    13,     // BUZZER
-};
-
-const int numRegisters = 4;
 
 enum RegisterStatus: uint16_t { 
     OFF = 0, 
@@ -39,13 +30,49 @@ enum RegisterStatus: uint16_t {
     BLINKING_FAST = 3 
 };
 
-RegisterStatus registerStates[] = {
-    OFF,
-    OFF,
-    OFF,
-    OFF
+const uint8_t gpioOutPorts[] = {
+    2,      // T.0, GREEN
+    4,      // T.1, YELLOW
+    12,     // T.2, RED
+    13,     // T.3, BUZZER
+};
+const uint8_t numHoldingRegisters = 4;
+RegisterStatus holdingRegisterStates[] = {
+    OFF,     // T.0, GREEN
+    OFF,     // T.1, YELLOW
+    OFF,     // T.2, RED
+    OFF      // T.3, BUZZER
 };
 
+const uint8_t gpioInPorts[] = {
+    34,      // I.0
+    33,      // I.1
+    14,      // I.2
+    21,      // I.3
+    35,      // I.4
+    25,      // I.5
+    32,      // I.6
+    22       // I.7
+};
+const uint8_t numInputRegisters = 8;
+RegisterStatus inputRegisterStates[] = {
+    OFF,     // I.0
+    OFF,     // I.1
+    OFF,     // I.2
+    OFF,     // I.3
+    OFF,     // I.4
+    OFF,     // I.5
+    OFF,     // I.6
+    OFF      // I.7
+};
+
+const int gpioButton = 36;
+const uint8_t numButtons = 3;
+RegisterStatus buttonStates[] = {
+    OFF,      // S1
+    OFF,      // S2
+    OFF,      // S3
+};
 
 void WizReset();
 void prt_hwval(uint8_t refval);
@@ -135,8 +162,7 @@ void prt_ethval(uint8_t refval) {
         Serial.println("Link flagged as DOWN. Check cable connection.");
         break;
     default:
-        Serial.println
-            ("UNKNOWN - Update espnow_gw.ino to match Ethernet.h");
+        Serial.println("UNKNOWN - Update espnow_gw.ino to match Ethernet.h");
     }
 }
 
@@ -165,7 +191,7 @@ void checkConnection() {
         for (uint8_t i = 0; i < 50; i++) {
             delay(100);          // Halt.
         }
-        Serial.println("Resetting");
+        Serial.println("Resetting ESP ...");
         ESP.restart();          // Try reboot
     } else {
         Serial.println(" OK");
@@ -175,31 +201,51 @@ void checkConnection() {
 
 bool wasOffline = false;
 void checkConnectionLoop() {
+    static uint32_t lastMillis = 0;
 
+    bool isOffline = (Ethernet.hardwareStatus() == EthernetNoHardware) || (Ethernet.linkStatus() == LinkOFF);
+    bool isIPvalid = Ethernet.localIP() != IPAddress(0,0,0,0);
+    bool isInTimeout = wasOffline && millis() - lastMillis > 10 * 1000;     // greater than 10 seconds
     // Red BLINKING_SLOW when connection is lost
-    if ((Ethernet.hardwareStatus() == EthernetNoHardware) || (Ethernet.linkStatus() == LinkOFF)) {
-        if (!wasOffline) Serial.println("Lost network connection");
+    if (isOffline && !isInTimeout) {
+        if (!wasOffline) {
+            Serial.println("Lost network connection");
+            lastMillis = millis();
+        }
+
+        holdingRegisterStates[0] = OFF;             // GREEN
+        holdingRegisterStates[1] = OFF;             // YELLOW
+        holdingRegisterStates[2] = BLINKING_SLOW;   // RED
+        holdingRegisterStates[3] = OFF;             // BUZZER
 
         wasOffline = true;
-        registerStates[0] = OFF;  // GREEN
-        registerStates[1] = OFF;  // YELLOW
-        registerStates[2] = BLINKING_SLOW;  // RED
-        registerStates[3] = OFF;  // BUZZER
-    } else if (wasOffline) {
-        Serial.print("Network connection restored, Ethernet IP is: ");
+    } else if (wasOffline && isIPvalid) {
+        Serial.print("Network restored, Ethernet IP is: ");
         Serial.println(Ethernet.localIP());
 
+        holdingRegisterStates[0] = OFF;  // GREEN
+        holdingRegisterStates[1] = OFF;  // YELLOW
+        holdingRegisterStates[2] = OFF;  // RED
+        holdingRegisterStates[3] = OFF;  // BUZZER
+
         wasOffline = false;
-        registerStates[0] = OFF;  // GREEN
-        registerStates[1] = OFF;  // YELLOW
-        registerStates[2] = OFF;  // RED
-        registerStates[3] = OFF;  // BUZZER
+        lastMillis = 0;
+    } else if (isInTimeout) {
+        if (millis() - lastMillis <= 60 * 1000) {   // less than one minute
+            Serial.println("Network still lost, resetting W5500 ethernet connection ...");
+            WizReset();
+            Ethernet.begin(eth_MAC, eth_IP, eth_DNS, eth_GW, eth_MASK);
+        } else {
+            Serial.println("In network timeout state since one minute, restarting ESP ...");
+            ESP.restart();
+        }
     }
 }
 
-void setupSignalLights() {
-    for (int i = 0; i < numRegisters; i++) {
-        pinMode(gpioPorts[i], OUTPUT);
+void setupOutputPorts() {
+    Serial.println("Setting up output port ...");
+    for (int i = 0; i < numHoldingRegisters; i++) {
+        pinMode(gpioOutPorts[i], OUTPUT);
     }
 }
 
@@ -210,16 +256,16 @@ void blink(int gpio_pin, int duration=300, int pause=150) {
     delay(pause);     
 }
 
-void testSignalLights() {
-    for (int i = 0; i < numRegisters; i++) {
-        blink(gpioPorts[i]);
+void testOutputPorts() {
+    for (uint8_t i = 0; i < numHoldingRegisters; i++) {
+        blink(gpioOutPorts[i]);
     }
 }
 
 bool blinkingStateSlow = true;
 bool blinkingStateFast = true;
 
-void signalLightsLoop() {
+void outputPortsLoop() {
 
     static uint32_t lastMillisSlow = 0;
     if (millis() - lastMillisSlow > 1200) {
@@ -233,22 +279,74 @@ void signalLightsLoop() {
         lastMillisFast = millis();
     }    
 
-    for (int i = 0; i < numRegisters; i++) {
+    for (uint8_t i = 0; i < numHoldingRegisters; i++) {
 
-        switch (registerStates[i]) {
+        switch (holdingRegisterStates[i]) {
             case OFF:
-                digitalWrite(gpioPorts[i], LOW);
+                digitalWrite(gpioOutPorts[i], LOW);
                 break;
             case ON:
-                digitalWrite(gpioPorts[i], HIGH);
+                digitalWrite(gpioOutPorts[i], HIGH);
                 break;
             case BLINKING_SLOW:
-                digitalWrite(gpioPorts[i], blinkingStateSlow ? HIGH : LOW);
+                digitalWrite(gpioOutPorts[i], blinkingStateSlow ? HIGH : LOW);
                 break;
             case BLINKING_FAST:
-                digitalWrite(gpioPorts[i], blinkingStateFast ? HIGH : LOW);
+                digitalWrite(gpioOutPorts[i], blinkingStateFast ? HIGH : LOW);
                 break;
         }
+    }
+}
+
+void setupInputPorts() {
+    Serial.println("Setting up input ports ...");
+    for (uint8_t i = 0; i < numInputRegisters; i++) {
+        pinMode(gpioInPorts[i], INPUT);
+    }
+}
+
+void inputPortsLoop() {
+    for (uint8_t i = 0; i < numInputRegisters; i++) {
+        switch (digitalRead(gpioInPorts[i])) {
+            case LOW:
+                inputRegisterStates[i] = OFF;
+                break;
+            case HIGH:
+                inputRegisterStates[i] = ON;
+                break;
+        }
+    }
+}
+
+void setupButtonPort() {
+    Serial.println("Setting up button port ...");
+    pinMode(gpioButton, INPUT);
+}
+
+void buttonReadingLoop() {
+    /*
+     * Norvi ENET built-in buttons all are connected to GPIO 36 
+     * using different resistor values. Therefore have to be decoded
+     * using ADC; ADC values are 12bit (0...4095)
+     */
+    uint16_t newVal = (uint16_t) analogRead(gpioButton);
+
+    // TODO: Decode buttons
+    // if (newVal >= 3290 && newVal <= 3310) {
+    // } else if (newVal >= 3290 && newVal <= 3310) {
+    // } else if (newVal >= 3290 && newVal <= 3310) {
+
+    if (newVal >= 300) {
+
+        Serial.print("Button analog reading: ");
+        Serial.println(newVal);
+
+        ESP.restart();      // Restart ESP32
+
+    } else if (newVal < 300) {
+        buttonStates[0] = OFF;
+        buttonStates[1] = OFF;
+        buttonStates[2] = OFF;
     }
 }
 
@@ -266,7 +364,7 @@ ModbusMessage HANDLE_READ_HOLD_REGISTER(ModbusMessage request) {
     request.get(4, words);  // read # of words from request
 
     // Address overflow?
-    if ((addr + words) > numRegisters) {
+    if ((addr + words) > numHoldingRegisters) {
         // Yes - send respective error response
         response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
     }
@@ -277,7 +375,7 @@ ModbusMessage HANDLE_READ_HOLD_REGISTER(ModbusMessage request) {
     if (request.getFunctionCode() == READ_HOLD_REGISTER) {
         for (uint8_t i = 0; i < words; ++i) {
             response.add(
-                (uint16_t)(registerStates[addr+i])
+                (uint16_t)(holdingRegisterStates[addr+i])
             );
         }
     }
@@ -294,7 +392,7 @@ ModbusMessage HANDLE_WRITE_HOLD_REGISTER(ModbusMessage request) {
     request.get(4, value);  // read received value
 
     // Address overflow?
-    if (addr > numRegisters) {
+    if (addr > numHoldingRegisters) {
         // Yes - send respective error response
         response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
     }
@@ -311,15 +409,15 @@ ModbusMessage HANDLE_WRITE_HOLD_REGISTER(ModbusMessage request) {
             Serial.print("WRITE_HOLD_REGISTER: Changing value of holding register ");
             Serial.print(addr);
             Serial.print(" from ");
-            Serial.print(registerStates[addr]);
+            Serial.print(holdingRegisterStates[addr]);
             Serial.print(" to ");
             Serial.println(newValue);
 
-            registerStates[addr] = newValue;
+            holdingRegisterStates[addr] = newValue;
         }
 
         response.add(
-            (uint16_t)(registerStates[addr])
+            (uint16_t)(holdingRegisterStates[addr])
         );
     }
 
@@ -338,7 +436,7 @@ ModbusMessage HANDLE_WRITE_MULT_REGISTERS(ModbusMessage request) {
 
 
     // Address overflow?
-    if ((addr+quantity) > numRegisters) {
+    if ((addr+quantity) > numHoldingRegisters) {
         // Yes - send respective error response
         response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
     }
@@ -348,7 +446,7 @@ ModbusMessage HANDLE_WRITE_MULT_REGISTERS(ModbusMessage request) {
 
     if (request.getFunctionCode() == WRITE_MULT_REGISTERS) {
 
-        for (int i = 0; i < quantity; i++) {
+        for (uint8_t i = 0; i < quantity; i++) {
 
             uint16_t value = request.get(7+(2*i));
 
@@ -359,11 +457,11 @@ ModbusMessage HANDLE_WRITE_MULT_REGISTERS(ModbusMessage request) {
                 Serial.print("WRITE_MULT_REGISTERS: Changing value of holding register ");
                 Serial.print(addr);
                 Serial.print(" from ");
-                Serial.print(registerStates[addr]);
+                Serial.print(holdingRegisterStates[addr]);
                 Serial.print(" to ");
                 Serial.println(newValue);
 
-                registerStates[addr] = newValue;
+                holdingRegisterStates[addr] = newValue;
             }
         }
     }
@@ -371,17 +469,45 @@ ModbusMessage HANDLE_WRITE_MULT_REGISTERS(ModbusMessage request) {
     return response;
 }
 
-void setupAsyncModbusServer() {
+ModbusMessage HANDLE_READ_INPUT_REGISTER(ModbusMessage request) {
+    // Serial.println(request);
+    ModbusMessage response; // The Modbus message we are going to give back
+    uint16_t addr = 0;      // Start address
+    uint16_t words = 0;     // # of words requested
+    request.get(2, addr);   // read address from request
+    request.get(4, words);  // read # of words from request
+
+    // Address overflow?
+    if ((addr + words) > numInputRegisters) {
+        // Yes - send respective error response
+        response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
+    }
+
+    // Set up response
+    response.add(request.getServerID(), request.getFunctionCode(), (uint8_t)(words * 2));
+
+    if (request.getFunctionCode() == READ_INPUT_REGISTER) {
+        for (uint8_t i = 0; i < words; ++i) {
+            response.add(
+                (uint16_t)(inputRegisterStates[addr+i])
+            );
+        }
+    }
+
+    return response;
+}
+
+void setupModbusServer() {
 
     Serial.println("Setting up ModbusTCP server ...");
     
-    // Now set up the server for some function codes
-    MBserver.registerWorker(1, READ_HOLD_REGISTER, &HANDLE_READ_HOLD_REGISTER);      // FC=03 for serverID=1
-    MBserver.registerWorker(1, WRITE_HOLD_REGISTER, &HANDLE_WRITE_HOLD_REGISTER);      // FC=03 for serverID=1
+    // Holding registers for output ports
+    MBserver.registerWorker(1, READ_HOLD_REGISTER, &HANDLE_READ_HOLD_REGISTER);          // FC=03 for serverID=1
+    MBserver.registerWorker(1, WRITE_HOLD_REGISTER, &HANDLE_WRITE_HOLD_REGISTER);        // FC=03 for serverID=1
     MBserver.registerWorker(1, WRITE_MULT_REGISTERS, &HANDLE_WRITE_MULT_REGISTERS);      // FC=03 for serverID=1
     
-    // MBserver.registerWorker(1, READ_INPUT_REGISTER, &FC03);     // FC=04 for serverID=1
-    // MBserver.registerWorker(2, READ_HOLD_REGISTER, &FC03);      // FC=03 for serverID=2
+    // Input registers for input ports
+    MBserver.registerWorker(1, READ_INPUT_REGISTER, &HANDLE_READ_INPUT_REGISTER);        // FC=04 for serverID=1
     
     // Start the server
     MBserver.start(502, 2, 20000);
@@ -401,7 +527,7 @@ void modbusLoop() {
 void setup() {
     Serial.begin(115200);
     delay(500);
-    Serial.println("\n\tNorvi IIoT Signal Lights\r\n");
+    Serial.println("\n\tNorvi ENET Signal Lights\r\n");
 
     // Use Ethernet.init(pin) to configure the CS pin.
     Ethernet.init(5);           // GPIO5 on the ESP32.
@@ -411,11 +537,11 @@ void setup() {
      * Network configuration - all except the MAC are optional.
      *
      * IMPORTANT NOTE - The mass-produced W5500 boards do -not-
-     *                  have a built-in MAC address (depite 
+     *                  have a built-in MAC address (despite 
      *                  comments to the contrary elsewhere). You
      *                  -must- supply a MAC address here.
      */
-    Serial.println("Starting ETHERNET connection...");
+    Serial.println("Starting Ethernet connection ...");
     Ethernet.begin(eth_MAC, eth_IP, eth_DNS, eth_GW, eth_MASK);
 
     delay(200);
@@ -425,17 +551,22 @@ void setup() {
 
     checkConnection();
 
-    setupAsyncModbusServer();
+    setupModbusServer();
 
-    setupSignalLights();
-    testSignalLights();
+    setupOutputPorts();
+    testOutputPorts();
+
+    setupInputPorts();
+
+    setupButtonPort();
 
     Serial.println("Setup done.");
 }
 
 void loop() {
-    modbusLoop();
+    buttonReadingLoop();
     checkConnectionLoop();
-    signalLightsLoop();
-    
+    outputPortsLoop();
+    inputPortsLoop();
+    modbusLoop();
 }

@@ -1,12 +1,4 @@
 /*
- *   $Id: local_config.h,v 1.5 2019/04/04 23:06:53 gaijin Exp $
- *
- * Change settings below to customize for -YOUR- local network.
- * 
- */
-
-
-/*
  * W5500 "hardware" MAC address.
  */
 uint8_t eth_MAC[] = { 0x02, 0xF0, 0x0D, 0xBE, 0xEF, 0x01 };
@@ -23,4 +15,4 @@ IPAddress eth_DNS(192, 168, 0, 1);		// *** CHANGE THIS to match YOUR DNS server.
 IPAddress eth_GW(192, 168, 0, 1);		// *** CHANGE THIS to match YOUR Gateway (router).     ***
 
 
-#define RESET_P	27				// Tie the Wiz820io/W5500 reset pin to ESP32 GPIO26 pin.
+#define RESET_P	27				// Tie the Wiz820io/W5500 reset pin to ESP32
