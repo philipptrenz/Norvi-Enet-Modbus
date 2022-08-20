@@ -26,22 +26,22 @@
 enum RegisterStatus: uint16_t { 
     OFF = 0, 
     ON = 1, 
-    BLINKING_SLOW = 2, 
-    BLINKING_FAST = 3 
+    FLASHING_SLOW = 2, 
+    FLASHING_FAST = 3 
 };
 
 const uint8_t gpioOutPorts[] = {
-    2,      // T.0, GREEN
-    4,      // T.1, YELLOW
-    12,     // T.2, RED
-    13,     // T.3, BUZZER
+    2,      // T.0
+    4,      // T.1
+    12,     // T.2
+    13,     // T.3
 };
 const uint8_t numHoldingRegisters = 4;
 RegisterStatus holdingRegisterStates[] = {
-    OFF,     // T.0, GREEN
-    OFF,     // T.1, YELLOW
-    OFF,     // T.2, RED
-    OFF      // T.3, BUZZER
+    OFF,     // T.0
+    OFF,     // T.1
+    OFF,     // T.2
+    OFF      // T.3
 };
 
 const uint8_t gpioInPorts[] = {
@@ -73,6 +73,54 @@ RegisterStatus buttonStates[] = {
     OFF,      // S2
     OFF,      // S3
 };
+
+/* OUTPUT PORTS ERROR AND DEFAULT STATE CONFIG */
+
+enum DeviceStatus: uint16_t { 
+    DEVICE_OK = 10, 
+    ETH_DISCONNECTED = 11, 
+    ETH_CONNECTING = 12, 
+    DEVICE_ERROR = 13 
+};
+
+void flash(int gpio_pin, int duration=300, int pause=150) {
+    digitalWrite(gpio_pin, HIGH);
+    delay(duration);
+    digitalWrite(gpio_pin, LOW);
+    delay(pause);     
+}
+
+void setOutputPorts(DeviceStatus status) {
+
+    switch(status) {
+        case DEVICE_OK:
+            holdingRegisterStates[0] = OFF;   // T.0
+            holdingRegisterStates[1] = OFF;   // T.1
+            holdingRegisterStates[2] = OFF;   // T.2
+            holdingRegisterStates[3] = OFF;   // T.3
+
+            flash(gpioOutPorts[3], 300, 0);   // flash T.3 once
+            break;
+        case ETH_DISCONNECTED:
+            holdingRegisterStates[0] = FLASHING_SLOW;   // T.0
+            holdingRegisterStates[1] = FLASHING_SLOW;   // T.1
+            holdingRegisterStates[2] = FLASHING_SLOW;   // T.2
+            holdingRegisterStates[3] = OFF;             // T.3
+            break;
+        case ETH_CONNECTING:
+            holdingRegisterStates[0] = FLASHING_FAST;   // T.0
+            holdingRegisterStates[1] = FLASHING_FAST;   // T.1
+            holdingRegisterStates[2] = FLASHING_FAST;   // T.2
+            holdingRegisterStates[3] = OFF;             // T.3
+            break;
+        case DEVICE_ERROR:
+            holdingRegisterStates[0] = ON;   // T.0
+            holdingRegisterStates[1] = ON;   // T.1
+            holdingRegisterStates[2] = ON;   // T.2
+            holdingRegisterStates[3] = OFF;  // T.3
+            break;
+    }
+}
 
 void WizReset();
 void prt_hwval(uint8_t refval);
@@ -133,7 +181,7 @@ void prt_hwval(uint8_t refval) {
         Serial.println("WizNet W5500 detected.");
         break;
     default:
-        Serial.println("UNKNOWN - Update espnow_gw.ino to match Ethernet.h");
+        Serial.println("UNKNOWN");
     }
 }
 
@@ -153,7 +201,7 @@ void prt_hwval(uint8_t refval) {
 void prt_ethval(uint8_t refval) {
     switch (refval) {
     case 0:
-        Serial.println("Uknown status.");
+        Serial.println("Unknown status.");
         break;
     case 1:
         Serial.println("Link flagged as UP.");
@@ -162,7 +210,7 @@ void prt_ethval(uint8_t refval) {
         Serial.println("Link flagged as DOWN. Check cable connection.");
         break;
     default:
-        Serial.println("UNKNOWN - Update espnow_gw.ino to match Ethernet.h");
+        Serial.println("UNKNOWN");
     }
 }
 
@@ -198,6 +246,28 @@ void checkConnection() {
     }
 }
 
+void reconnect() {
+    setOutputPorts(ETH_CONNECTING);
+
+    WizReset();
+
+    /* 
+     * Network configuration - all except the MAC are optional.
+     *
+     * IMPORTANT NOTE - The mass-produced W5500 boards do -not-
+     *                  have a built-in MAC address (despite 
+     *                  comments to the contrary elsewhere). You
+     *                  -must- supply a MAC address here.
+     */
+    Serial.println("Starting Ethernet connection ...");
+    Ethernet.begin(eth_MAC, eth_IP, eth_DNS, eth_GW, eth_MASK);
+
+    delay(200);
+
+    Serial.print("Ethernet IP is: ");
+    Serial.println(Ethernet.localIP());
+}
+
 
 bool wasOffline = false;
 void checkConnectionLoop() {
@@ -206,35 +276,28 @@ void checkConnectionLoop() {
     bool isOffline = (Ethernet.hardwareStatus() == EthernetNoHardware) || (Ethernet.linkStatus() == LinkOFF);
     bool isIPvalid = Ethernet.localIP() != IPAddress(0,0,0,0);
     bool isInTimeout = wasOffline && millis() - lastMillis > 5 * 1000;     // greater than 5 seconds
-    // Red BLINKING_SLOW when connection is lost
+    // Red FLASHING_SLOW when connection is lost
     if (isOffline && !isInTimeout) {
         if (!wasOffline) {
             Serial.println("Lost network connection");
             lastMillis = millis();
         }
 
-        holdingRegisterStates[0] = OFF;             // GREEN
-        holdingRegisterStates[1] = OFF;             // YELLOW
-        holdingRegisterStates[2] = BLINKING_SLOW;   // RED
-        holdingRegisterStates[3] = OFF;             // BUZZER
+        setOutputPorts(ETH_DISCONNECTED);
 
         wasOffline = true;
     } else if (wasOffline && isIPvalid) {
         Serial.print("Network restored, Ethernet IP is: ");
         Serial.println(Ethernet.localIP());
 
-        holdingRegisterStates[0] = OFF;             // GREEN
-        holdingRegisterStates[1] = OFF;             // YELLOW
-        holdingRegisterStates[2] = OFF;             // RED
-        holdingRegisterStates[3] = OFF;             // BUZZER
+        setOutputPorts(DEVICE_OK);
 
         wasOffline = false;
         lastMillis = 0;
     } else if (isInTimeout) {
         if (millis() - lastMillis <= 39 * 1000) {   // less than 30 seconds
             Serial.println("Network still lost, resetting W5500 ethernet connection ...");
-            WizReset();
-            Ethernet.begin(eth_MAC, eth_IP, eth_DNS, eth_GW, eth_MASK);
+            reconnect();
         } else {
             Serial.println("In network timeout state since one minute, restarting ESP ...");
             ESP.restart();
@@ -249,33 +312,26 @@ void setupOutputPorts() {
     }
 }
 
-void blink(int gpio_pin, int duration=300, int pause=150) {
-    digitalWrite(gpio_pin, HIGH);
-    delay(duration);
-    digitalWrite(gpio_pin, LOW);
-    delay(pause);     
-}
-
 void testOutputPorts() {
     for (uint8_t i = 0; i < numHoldingRegisters; i++) {
-        blink(gpioOutPorts[i]);
+        flash(gpioOutPorts[i]);
     }
 }
 
-bool blinkingStateSlow = true;
-bool blinkingStateFast = true;
+bool flashingStateSlow = true;
+bool flashingStateFast = true;
 
 void outputPortsLoop() {
 
     static uint32_t lastMillisSlow = 0;
     if (millis() - lastMillisSlow > 1200) {
-        blinkingStateSlow = !blinkingStateSlow;
+        flashingStateSlow = !flashingStateSlow;
         lastMillisSlow = millis();
     }
 
     static uint32_t lastMillisFast = 0;
     if (millis() - lastMillisFast > 300) {
-        blinkingStateFast = !blinkingStateFast;
+        flashingStateFast = !flashingStateFast;
         lastMillisFast = millis();
     }    
 
@@ -288,11 +344,11 @@ void outputPortsLoop() {
             case ON:
                 digitalWrite(gpioOutPorts[i], HIGH);
                 break;
-            case BLINKING_SLOW:
-                digitalWrite(gpioOutPorts[i], blinkingStateSlow ? HIGH : LOW);
+            case FLASHING_SLOW:
+                digitalWrite(gpioOutPorts[i], flashingStateSlow ? HIGH : LOW);
                 break;
-            case BLINKING_FAST:
-                digitalWrite(gpioOutPorts[i], blinkingStateFast ? HIGH : LOW);
+            case FLASHING_FAST:
+                digitalWrite(gpioOutPorts[i], flashingStateFast ? HIGH : LOW);
                 break;
         }
     }
@@ -529,36 +585,19 @@ void setup() {
     delay(500);
     Serial.println("\n\tNorvi ENET Signal Lights\r\n");
 
-    // Use Ethernet.init(pin) to configure the CS pin.
-    Ethernet.init(5);           // GPIO5 on the ESP32.
-    WizReset();
-
-    /* 
-     * Network configuration - all except the MAC are optional.
-     *
-     * IMPORTANT NOTE - The mass-produced W5500 boards do -not-
-     *                  have a built-in MAC address (despite 
-     *                  comments to the contrary elsewhere). You
-     *                  -must- supply a MAC address here.
-     */
-    Serial.println("Starting Ethernet connection ...");
-    Ethernet.begin(eth_MAC, eth_IP, eth_DNS, eth_GW, eth_MASK);
-
-    delay(200);
-
-    Serial.print("Ethernet IP is: ");
-    Serial.println(Ethernet.localIP());
-
-    checkConnection();
-
-    setupModbusServer();
-
     setupOutputPorts();
     testOutputPorts();
 
     setupInputPorts();
-
     setupButtonPort();
+
+    // Use Ethernet.init(pin) to configure the CS pin.
+    Ethernet.init(5);           // GPIO5 on the ESP32.
+
+    reconnect();
+    checkConnection();
+
+    setupModbusServer();
 
     Serial.println("Setup done.");
 }
