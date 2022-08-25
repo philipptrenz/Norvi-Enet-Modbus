@@ -45,10 +45,10 @@ RegisterStatus holdingRegisterStates[] = {
 };
 
 const uint8_t gpioInPorts[] = {
-    34,      // I.0
-    33,      // I.1
-    14,      // I.2
-    21,      // I.3
+    21,      // I.0
+    14,      // I.1
+    33,      // I.2
+    34,      // I.3
     35,      // I.4
     25,      // I.5
     32,      // I.6
@@ -239,9 +239,10 @@ void checkConnection() {
         for (uint8_t i = 0; i < 50; i++) {
             delay(100);          // Halt.
         }
-        Serial.println("Resetting ESP ...");
-        ESP.restart();          // Try reboot
+        setOutputPorts(DEVICE_ERROR);
+        Serial.println("Could not connect to Ethernet ...");
     } else {
+        setOutputPorts(DEVICE_OK);
         Serial.println(" OK");
     }
 }
@@ -270,6 +271,7 @@ void reconnect() {
 
 
 bool wasOffline = false;
+
 void checkConnectionLoop() {
     static uint32_t lastMillis = 0;
 
@@ -295,9 +297,11 @@ void checkConnectionLoop() {
         wasOffline = false;
         lastMillis = 0;
     } else if (isInTimeout) {
-        if (millis() - lastMillis <= 39 * 1000) {   // less than 30 seconds
+        if (millis() - lastMillis <= 30 * 1000) {   // less than 30 seconds
+            // TODO: Wait 5 seconds between reconnect approaches
             Serial.println("Network still lost, resetting W5500 ethernet connection ...");
             reconnect();
+            
         } else {
             Serial.println("In network timeout state since one minute, restarting ESP ...");
             ESP.restart();
@@ -364,10 +368,10 @@ void setupInputPorts() {
 void inputPortsLoop() {
     for (uint8_t i = 0; i < numInputRegisters; i++) {
         switch (digitalRead(gpioInPorts[i])) {
-            case LOW:
+            case HIGH:
                 inputRegisterStates[i] = OFF;
                 break;
-            case HIGH:
+            case LOW:
                 inputRegisterStates[i] = ON;
                 break;
         }
@@ -379,6 +383,7 @@ void setupButtonPort() {
     pinMode(gpioButton, INPUT);
 }
 
+uint32_t lastAllButtonsOffMillis = 0;
 void buttonReadingLoop() {
     /*
      * Norvi ENET built-in buttons all are connected to GPIO 36 
@@ -387,22 +392,68 @@ void buttonReadingLoop() {
      */
     uint16_t newVal = (uint16_t) analogRead(gpioButton);
 
-    // TODO: Decode buttons
-    // if (newVal >= 3290 && newVal <= 3310) {
-    // } else if (newVal >= 3290 && newVal <= 3310) {
-    // } else if (newVal >= 3290 && newVal <= 3310) {
+    if (newVal > 1300) {
 
-    if (newVal >= 300) {
+        // Serial.print("Button analog reading: ");
+        // Serial.println(newVal);
 
-        Serial.print("Button analog reading: ");
-        Serial.println(newVal);
+        if (newVal < 2000) {
+            buttonStates[0] = ON;
+            buttonStates[1] = OFF;
+            buttonStates[2] = OFF;
+            // Serial.println("Button S1 pressed");
 
-        ESP.restart();      // Restart ESP32
+        } else if (newVal < 2450) {
+            buttonStates[0] = OFF;
+            buttonStates[1] = ON;
+            buttonStates[2] = OFF;
+            // Serial.println("Button S2 pressed");
 
-    } else if (newVal < 300) {
+        } else if (newVal < 2950) {
+            buttonStates[0] = ON;
+            buttonStates[1] = ON;
+            buttonStates[2] = OFF;
+            // Serial.println("Button S1 and S2 pressed");
+
+        } else if (newVal < 3280) {
+            buttonStates[0] = OFF;
+            buttonStates[1] = OFF;
+            buttonStates[2] = ON;
+            // Serial.println("Button S3 pressed");
+
+        } else if (newVal < 3380) {
+            buttonStates[0] = ON;
+            buttonStates[1] = OFF;
+            buttonStates[2] = ON;
+            // Serial.println("Button S1 and S3 pressed");
+
+        } else if (newVal < 3460) {
+            buttonStates[0] = OFF;
+            buttonStates[1] = ON;
+            buttonStates[2] = ON;
+            // Serial.println("Button S2 and S3 pressed");
+
+        } else if (newVal < 3800) {
+            buttonStates[0] = ON;
+            buttonStates[1] = ON;
+            buttonStates[2] = ON;
+            // Serial.println("Button S1 and S2 and S3 pressed");
+
+            if (lastAllButtonsOffMillis > 0 && millis() - lastAllButtonsOffMillis > 3*1000) {
+                // If all three buttons are pressed simultaneously for at least three seconds
+                Serial.println("Restart button sequence pressed, restarting ESP ...");
+                ESP.restart();      // Restart ESP32
+            }
+
+        }
+
+
+    } else {
         buttonStates[0] = OFF;
         buttonStates[1] = OFF;
         buttonStates[2] = OFF;
+
+        lastAllButtonsOffMillis = millis();
     }
 }
 
@@ -534,7 +585,7 @@ ModbusMessage HANDLE_READ_INPUT_REGISTER(ModbusMessage request) {
     request.get(4, words);  // read # of words from request
 
     // Address overflow?
-    if ((addr + words) > numInputRegisters) {
+    if ((addr + words) > (numInputRegisters + numButtons)) {
         // Yes - send respective error response
         response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
     }
@@ -544,9 +595,19 @@ ModbusMessage HANDLE_READ_INPUT_REGISTER(ModbusMessage request) {
 
     if (request.getFunctionCode() == READ_INPUT_REGISTER) {
         for (uint8_t i = 0; i < words; ++i) {
-            response.add(
-                (uint16_t)(inputRegisterStates[addr+i])
-            );
+            uint8_t registerId = addr+i;
+            if (registerId < numInputRegisters) {
+                // Return inputRegisterState at registerId
+                response.add(
+                    (uint16_t)(inputRegisterStates[registerId])
+                );
+            } else {
+                // Return buttonState
+                uint8_t buttonId = registerId - numInputRegisters;
+                response.add(
+                    (uint16_t)(buttonStates[buttonId])
+                );
+            }
         }
     }
 
@@ -583,7 +644,10 @@ void modbusLoop() {
 void setup() {
     Serial.begin(115200);
     delay(500);
-    Serial.println("\n\tNorvi ENET Signal Lights\r\n");
+    Serial.println("\n\tNorvi ENET Modbus TCP Server\r\n");
+
+    Serial.println("Waiting 5 seconds for applying new firmware ...");
+    delay(5000);
 
     setupOutputPorts();
     testOutputPorts();
@@ -592,7 +656,7 @@ void setup() {
     setupButtonPort();
 
     // Use Ethernet.init(pin) to configure the CS pin.
-    Ethernet.init(5);           // GPIO5 on the ESP32.
+    Ethernet.init(26);           // GPIO26 on the ESP32.
 
     reconnect();
     checkConnection();
@@ -604,7 +668,7 @@ void setup() {
 
 void loop() {
     buttonReadingLoop();
-    checkConnectionLoop();
+    //checkConnectionLoop();
     outputPortsLoop();
     inputPortsLoop();
     modbusLoop();
