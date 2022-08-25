@@ -16,6 +16,9 @@
 #include <Ethernet.h>
 #include <ArduinoOTA.h>
 
+#include <Wire.h>
+#include "SSD1306Wire.h"
+
 #include "local_config.h"   // <--- Change settings for YOUR network here.
 
 
@@ -83,6 +86,10 @@ enum DeviceStatus: uint16_t {
     DEVICE_ERROR = 13 
 };
 
+
+// SSD1306 display configuration (128x64):
+SSD1306Wire display(0x3c, 16, 17);  // ADDRESS, SDA, SCL
+
 void flash(int gpio_pin, int duration=300, int pause=150) {
     digitalWrite(gpio_pin, HIGH);
     delay(duration);
@@ -90,48 +97,20 @@ void flash(int gpio_pin, int duration=300, int pause=150) {
     delay(pause);     
 }
 
-void setOutputPorts(DeviceStatus status) {
-
-    switch(status) {
-        case DEVICE_OK:
-            holdingRegisterStates[0] = OFF;   // T.0
-            holdingRegisterStates[1] = OFF;   // T.1
-            holdingRegisterStates[2] = OFF;   // T.2
-            holdingRegisterStates[3] = OFF;   // T.3
-
-            flash(gpioOutPorts[3], 300, 0);   // flash T.3 once
-            break;
-        case ETH_DISCONNECTED:
-            holdingRegisterStates[0] = FLASHING_SLOW;   // T.0
-            holdingRegisterStates[1] = FLASHING_SLOW;   // T.1
-            holdingRegisterStates[2] = FLASHING_SLOW;   // T.2
-            holdingRegisterStates[3] = OFF;             // T.3
-            break;
-        case ETH_CONNECTING:
-            holdingRegisterStates[0] = FLASHING_FAST;   // T.0
-            holdingRegisterStates[1] = FLASHING_FAST;   // T.1
-            holdingRegisterStates[2] = FLASHING_FAST;   // T.2
-            holdingRegisterStates[3] = OFF;             // T.3
-            break;
-        case DEVICE_ERROR:
-            holdingRegisterStates[0] = ON;   // T.0
-            holdingRegisterStates[1] = ON;   // T.1
-            holdingRegisterStates[2] = ON;   // T.2
-            holdingRegisterStates[3] = OFF;  // T.3
-            break;
-    }
-}
-
 void WizReset();
-void prt_hwval(uint8_t refval);
-void prt_ethval(uint8_t refval);
+String prt_hwval(uint8_t refval);
+String prt_ethval(uint8_t refval);
+
+
+void log(String text);
+void updateDisplayInfo(String text);
 
 /*
  * Wiz W5500 reset function.  Change this for the specific reset
  * sequence required for your particular board or module.
  */
 void WizReset() {
-    Serial.print("Resetting Wiz W5500 Ethernet Board...  ");
+    Serial.println("Resetting W5500 Ethernet ...");
     pinMode(RESET_P, OUTPUT);
     digitalWrite(RESET_P, HIGH);
     delay(250);
@@ -166,22 +145,18 @@ void WizReset() {
  *  };
  *
  */
-void prt_hwval(uint8_t refval) {
+String prt_hwval(uint8_t refval) {
     switch (refval) {
     case 0:
-        Serial.println("No hardware detected.");
-        break;
+        return "No hardware detected.";
     case 1:
-        Serial.println("WizNet W5100 detected.");
-        break;
+        return "WizNet W5100 detected.";
     case 2:
-        Serial.println("WizNet W5200 detected.");
-        break;
+        return "WizNet W5200 detected.";
     case 3:
-        Serial.println("WizNet W5500 detected.");
-        break;
+        return "WizNet W5500 detected.";
     default:
-        Serial.println("UNKNOWN");
+        return "UNKNOWN";
     }
 }
 
@@ -198,19 +173,16 @@ void prt_hwval(uint8_t refval) {
  *  };
  *
  */
-void prt_ethval(uint8_t refval) {
+String prt_ethval(uint8_t refval) {
     switch (refval) {
     case 0:
-        Serial.println("Unknown status.");
-        break;
+        return "UNKNOWN";
     case 1:
-        Serial.println("Link flagged as UP.");
-        break;
+        return "UP";
     case 2:
-        Serial.println("Link flagged as DOWN. Check cable connection.");
-        break;
+        return "DOWN";
     default:
-        Serial.println("UNKNOWN");
+        return "UNDEFINED";
     }
 }
 
@@ -218,7 +190,9 @@ void checkConnection() {
     /*
      * Sanity checks for W5500 and cable connection.
      */
+
     Serial.print("Checking connection.");
+
     bool rdy_flag = false;
     for (uint8_t i = 0; i <= 20; i++) {
         if ((Ethernet.hardwareStatus() == EthernetNoHardware) || (Ethernet.linkStatus() == LinkOFF)) {
@@ -231,24 +205,23 @@ void checkConnection() {
         }
     }
     if (rdy_flag == false) {
-        Serial.println("\n\r\tHardware fault, or cable problem... cannot continue.");
-        Serial.print("Hardware Status: ");
-        prt_hwval(Ethernet.hardwareStatus());
-        Serial.print("   Cable Status: ");
-        prt_ethval(Ethernet.linkStatus());
+
+        Serial.println("\n\r\tHardware fault, or cable issue, cannot continue:");
+        Serial.println("  Hardware Status: " + prt_hwval(Ethernet.hardwareStatus()));
+        Serial.println("     Cable Status: " + prt_ethval(Ethernet.linkStatus()));
         for (uint8_t i = 0; i < 50; i++) {
             delay(100);          // Halt.
         }
-        setOutputPorts(DEVICE_ERROR);
-        Serial.println("Could not connect to Ethernet ...");
+
+        Serial.println("Could not connect to Ethernet.");
     } else {
-        setOutputPorts(DEVICE_OK);
-        Serial.println(" OK");
+        Serial.println("Ethernet is ok.");
     }
 }
 
 void reconnect() {
-    setOutputPorts(ETH_CONNECTING);
+
+    log("Starting Ethernet connection ...");
 
     WizReset();
 
@@ -260,13 +233,11 @@ void reconnect() {
      *                  comments to the contrary elsewhere). You
      *                  -must- supply a MAC address here.
      */
-    Serial.println("Starting Ethernet connection ...");
+    
     Ethernet.begin(eth_MAC, eth_IP, eth_DNS, eth_GW, eth_MASK);
 
     delay(200);
-
-    Serial.print("Ethernet IP is: ");
-    Serial.println(Ethernet.localIP());
+    Serial.println("Ethernet IP is: " + Ethernet.localIP().toString());
 }
 
 
@@ -285,21 +256,17 @@ void checkConnectionLoop() {
             lastMillis = millis();
         }
 
-        setOutputPorts(ETH_DISCONNECTED);
-
         wasOffline = true;
     } else if (wasOffline && isIPvalid) {
         Serial.print("Network restored, Ethernet IP is: ");
         Serial.println(Ethernet.localIP());
-
-        setOutputPorts(DEVICE_OK);
 
         wasOffline = false;
         lastMillis = 0;
     } else if (isInTimeout) {
         if (millis() - lastMillis <= 30 * 1000) {   // less than 30 seconds
             // TODO: Wait 5 seconds between reconnect approaches
-            Serial.println("Network still lost, resetting W5500 ethernet connection ...");
+            Serial.println("Network still lost, resetting W5500 Ethernet connection ...");
             reconnect();
             
         } else {
@@ -359,7 +326,6 @@ void outputPortsLoop() {
 }
 
 void setupInputPorts() {
-    Serial.println("Setting up input ports ...");
     for (uint8_t i = 0; i < numInputRegisters; i++) {
         pinMode(gpioInPorts[i], INPUT);
     }
@@ -379,7 +345,6 @@ void inputPortsLoop() {
 }
 
 void setupButtonPort() {
-    Serial.println("Setting up button port ...");
     pinMode(gpioButton, INPUT);
 }
 
@@ -615,8 +580,6 @@ ModbusMessage HANDLE_READ_INPUT_REGISTER(ModbusMessage request) {
 }
 
 void setupModbusServer() {
-
-    Serial.println("Setting up ModbusTCP server ...");
     
     // Holding registers for output ports
     MBserver.registerWorker(1, READ_HOLD_REGISTER, &HANDLE_READ_HOLD_REGISTER);          // FC=03 for serverID=1
@@ -641,35 +604,111 @@ void modbusLoop() {
 
 /** MODBUS SERVER END **/
 
+
+/** DISPLAY **/
+
+void setupDisplay() {
+
+    display.init();
+    display.flipScreenVertically();
+    display.setContrast(255);
+    display.setFont(ArialMT_Plain_10);
+
+    uint16_t w = display.getWidth();
+    uint16_t h = display.getHeight();
+
+    display.setTextAlignment(TEXT_ALIGN_CENTER_BOTH);
+    // display.drawString(w / 2, 6, "NORVI ENET ModbusTCP");
+    display.drawString(w / 2, 6, "casayohana");
+    display.drawLine(0, 13, w, 13);
+
+    display.display();
+}
+
+void log(String text) {
+    Serial.println(text);
+    updateDisplayInfo(text);
+}
+
+void updateDisplayInfo(String text) {
+
+    uint16_t w = display.getWidth();
+    uint16_t h = display.getHeight();
+
+    display.clear();
+
+    // HEADER
+    display.setTextAlignment(TEXT_ALIGN_CENTER_BOTH);
+    // display.drawString(w / 2, 6, "NORVI ENET ModbusTCP");
+    display.drawString(w / 2, 6, "casayohana");
+    display.drawLine(0, 13, w, 13);
+
+    // LOGGING TEXT
+    display.setTextAlignment(TEXT_ALIGN_LEFT);
+    if (display.getStringWidth(text) > w) {
+        display.drawStringMaxWidth(0, 14, w, text);
+    } else {
+        display.drawStringMaxWidth(0, 14 + 6, w, text);
+    }
+    
+
+    // FOOTER
+    display.drawLine(0, h - 22, w, h - 22);
+    display.setTextAlignment(TEXT_ALIGN_LEFT);
+
+    String linkStatus = prt_ethval(Ethernet.linkStatus());
+    display.drawString(0, h - 21, "Link: " + linkStatus);
+
+    String ip = Ethernet.localIP().toString();
+    display.drawString(0, h - 10, "IP: " + ip);
+
+    display.display();
+}
+
+/** DISPLAY END **/
+
+
 void setup() {
     Serial.begin(115200);
     delay(500);
-    Serial.println("\n\tNorvi ENET Modbus TCP Server\r\n");
 
-    Serial.println("Waiting 5 seconds for applying new firmware ...");
-    delay(5000);
+    setupDisplay();
 
+    Serial.println("\n\tNorvi ENET ModbusTCP\r\n");
+
+    log("Setting up IO ports ...");
     setupOutputPorts();
-    testOutputPorts();
-
     setupInputPorts();
     setupButtonPort();
 
+    log("Setting up Ethernet ...");
     // Use Ethernet.init(pin) to configure the CS pin.
     Ethernet.init(26);           // GPIO26 on the ESP32.
 
     reconnect();
     checkConnection();
 
+    log("Starting Modbus TCP server ...");
     setupModbusServer();
 
-    Serial.println("Setup done.");
+    log("Testing output ports ...");
+    testOutputPorts();
+
+    log("Device ready.");
 }
+
+uint32_t displayUpdateMillis = millis();
 
 void loop() {
     buttonReadingLoop();
-    //checkConnectionLoop();
+    checkConnectionLoop();
     outputPortsLoop();
     inputPortsLoop();
     modbusLoop();
+
+    // Update display every 500ms
+    if (millis() - displayUpdateMillis > 500) {
+        updateDisplayInfo("Device ready.");
+        displayUpdateMillis = millis();
+    }
 }
