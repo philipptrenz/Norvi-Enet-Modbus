@@ -26,7 +26,7 @@ The physical connections between the ESP32 and W5500 are different, but simpler 
 -  **GPIO23**   <-->   **MOSI**
 -  **GPIO19**   <-->   **MISO**
 -  **GPIO18**   <-->   **SCLK**
--  **GPIO5**    <-->   **SCS**
+-  **GPIO26**    <-->   **SCS**
 -  **GPIO27**   <-->   **RESET**
 
 GPIO27 was chosen for the reset driver pin (from the ESP32 to the W5500) simply because it didn't clash with any of the other peripheral devices I intended to use and didn't have existing pull-up or pull-down requirements that might cause problems at power-up (as GPIO15 does on the ESP8266, for instance).
