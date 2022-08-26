@@ -97,11 +97,6 @@ void flash(int gpio_pin, int duration=300, int pause=150) {
     delay(pause);     
 }
 
-void WizReset();
-String prt_hwval(uint8_t refval);
-String prt_ethval(uint8_t refval);
-
-
 void log(String text);
 void updateDisplayInfo(String text);
 
@@ -110,7 +105,8 @@ void updateDisplayInfo(String text);
  * sequence required for your particular board or module.
  */
 void WizReset() {
-    Serial.println("Resetting W5500 Ethernet ...");
+    Serial.print("Resetting W5500 Ethernet ...");
+
     pinMode(RESET_P, OUTPUT);
     digitalWrite(RESET_P, HIGH);
     delay(250);
@@ -118,84 +114,49 @@ void WizReset() {
     delay(50);
     digitalWrite(RESET_P, HIGH);
     delay(350);
-    Serial.println("Done.");
+
+    Serial.println(" Done.");
 }
 
+bool isW5500Found() {
+    return Ethernet.hardwareStatus() == EthernetW5500;
+}
 
-/*
- * This is a crock. It's here in an effort
- * to help people debug hardware problems with
- * their W5100 ~ W5500 board setups.  It's 
- * a copy of the Ethernet library enums and
- * should, at the very least, be regenerated
- * from Ethernet.h automatically before the
- * compile starts (that's a TODO item).
- *
- */
-/*
- * Print the result of the hardware status enum
- * as a string.
- * Ethernet.h currently contains these values:-
- *
- *  enum EthernetHardwareStatus {
- *      EthernetNoHardware,
- *      EthernetW5100,
- *      EthernetW5200,
- *      EthernetW5500
- *  };
- *
- */
-String prt_hwval(uint8_t refval) {
-    switch (refval) {
-    case 0:
-        return "No hardware detected.";
-    case 1:
-        return "WizNet W5100 detected.";
-    case 2:
-        return "WizNet W5200 detected.";
-    case 3:
-        return "WizNet W5500 detected.";
-    default:
-        return "UNKNOWN";
+String hardwareStatusString() {
+    switch (Ethernet.hardwareStatus()) {
+        case EthernetW5100: return "W5100";
+		case EthernetW5200: return "W5200";
+        case EthernetW5500: return "W5500";
+		default: return "NOT FOUND";
     }
 }
 
+bool isLinkUp() {
+    return Ethernet.linkStatus() == LinkON;
+}
 
-/*
- * Print the result of the ethernet connection
- * status enum as a string.
- * Ethernet.h currently contains these values:-
- *
- *  enum EthernetLinkStatus {
- *     Unknown,
- *     LinkON,
- *     LinkOFF
- *  };
- *
- */
-String prt_ethval(uint8_t refval) {
-    switch (refval) {
-    case 0:
-        return "UNKNOWN";
-    case 1:
-        return "UP";
-    case 2:
-        return "DOWN";
-    default:
-        return "UNDEFINED";
+String linkStatusString() {
+    switch (Ethernet.linkStatus()) {
+        case LinkON: return "UP";
+        case LinkOFF: return "DOWN";
+        default: return "UNKNOWN";
     }
 }
 
-void checkConnection() {
+bool isIPValid() {
+    return Ethernet.localIP() != IPAddress(0,0,0,0);
+}
+
+bool checkConnection() {
     /*
      * Sanity checks for W5500 and cable connection.
      */
 
-    Serial.print("Checking connection.");
+    Serial.print("Checking network connection ...");
 
     bool rdy_flag = false;
     for (uint8_t i = 0; i <= 20; i++) {
-        if ((Ethernet.hardwareStatus() == EthernetNoHardware) || (Ethernet.linkStatus() == LinkOFF)) {
+        if (Ethernet.hardwareStatus() == EthernetNoHardware || Ethernet.linkStatus() == LinkOFF) {
             Serial.print(".");
             rdy_flag = false;
             delay(80);
@@ -204,19 +165,22 @@ void checkConnection() {
             break;
         }
     }
-    if (rdy_flag == false) {
+    if (!rdy_flag) {
 
-        Serial.println("\n\r\tHardware fault, or cable issue, cannot continue:");
-        Serial.println("  Hardware Status: " + prt_hwval(Ethernet.hardwareStatus()));
-        Serial.println("     Cable Status: " + prt_ethval(Ethernet.linkStatus()));
+        Serial.println("\n\rHardware fault, or cable issue:");
+        Serial.println("\tHardware: " + hardwareStatusString());
+        Serial.println("\tLink: " + linkStatusString());
+        Serial.println("\tIP: " + Ethernet.localIP().toString());
         for (uint8_t i = 0; i < 50; i++) {
             delay(100);          // Halt.
         }
 
-        Serial.println("Could not connect to Ethernet.");
+        Serial.println("Could not connect to network.");
     } else {
-        Serial.println("Ethernet is ok.");
+        Serial.println(" Ok.");
     }
+
+    return rdy_flag;
 }
 
 void reconnect() {
@@ -241,38 +205,38 @@ void reconnect() {
 }
 
 
-bool wasOffline = false;
-
 void checkConnectionLoop() {
     static uint32_t lastMillis = 0;
+    static uint32_t lastResetMillis = 0;
+    static bool wasOffline = false;
 
-    bool isOffline = (Ethernet.hardwareStatus() == EthernetNoHardware) || (Ethernet.linkStatus() == LinkOFF);
-    bool isIPvalid = Ethernet.localIP() != IPAddress(0,0,0,0);
-    bool isInTimeout = wasOffline && millis() - lastMillis > 5 * 1000;     // greater than 5 seconds
-    // Red FLASHING_SLOW when connection is lost
-    if (isOffline && !isInTimeout) {
-        if (!wasOffline) {
-            Serial.println("Lost network connection");
-            lastMillis = millis();
-        }
+    bool isOnline = isW5500Found() && isLinkUp() && isIPValid();
+    uint32_t lastUpdatedSeconds = millis() - lastMillis;
+
+    if (!isOnline && !wasOffline) {
+        Serial.println("Lost Ethernet connection.");
+        lastMillis = millis();
 
         wasOffline = true;
-    } else if (wasOffline && isIPvalid) {
-        Serial.print("Network restored, Ethernet IP is: ");
-        Serial.println(Ethernet.localIP());
-
-        wasOffline = false;
-        lastMillis = 0;
-    } else if (isInTimeout) {
-        if (millis() - lastMillis <= 30 * 1000) {   // less than 30 seconds
-            // TODO: Wait 5 seconds between reconnect approaches
+    } else if (!isOnline && wasOffline && lastUpdatedSeconds > 5 * 1000) {
+        
+        uint32_t lastResetSeconds =  millis() - lastResetMillis;
+        if (lastUpdatedSeconds < 30 * 1000 && lastResetSeconds > 5 * 1000) { 
+            // If shorter than 30 seconds in timeout and at least 5 seconds since last reset
             Serial.println("Network still lost, resetting W5500 Ethernet connection ...");
+
             reconnect();
-            
-        } else {
+            checkConnection();
+
+            lastResetMillis = millis();
+        } else if (lastUpdatedSeconds > 30 * 1000) {
             Serial.println("In network timeout state since one minute, restarting ESP ...");
             ESP.restart();
         }
+    } else if (isOnline && wasOffline) {
+        Serial.println("Network restored, IP is: " + Ethernet.localIP().toString());
+
+        wasOffline = false;
     }
 }
 
@@ -289,10 +253,10 @@ void testOutputPorts() {
     }
 }
 
-bool flashingStateSlow = true;
-bool flashingStateFast = true;
-
 void outputPortsLoop() {
+
+    static bool flashingStateSlow = true;
+    static bool flashingStateFast = true;
 
     static uint32_t lastMillisSlow = 0;
     if (millis() - lastMillisSlow > 1200) {
@@ -598,7 +562,7 @@ void modbusLoop() {
 
     if (millis() - lastMillis > 5000) {
         lastMillis = millis();
-        Serial.printf("Millis: %10d - free heap: %d\n", lastMillis, ESP.getFreeHeap());
+        // Serial.printf("Millis: %10d - free heap: %d\n", lastMillis, ESP.getFreeHeap());
     }
 }
 
@@ -655,9 +619,7 @@ void updateDisplayInfo(String text) {
     // FOOTER
     display.drawLine(0, h - 22, w, h - 22);
     display.setTextAlignment(TEXT_ALIGN_LEFT);
-
-    String linkStatus = prt_ethval(Ethernet.linkStatus());
-    display.drawString(0, h - 21, "Link: " + linkStatus);
+    display.drawString(0, h - 21, "Link: " + linkStatusString());
 
     String ip = Ethernet.localIP().toString();
     display.drawString(0, h - 10, "IP: " + ip);
@@ -667,6 +629,36 @@ void updateDisplayInfo(String text) {
 
 /** DISPLAY END **/
 
+
+/** ARDUINO OTA SETUP **/
+
+void setupArduinoOTA() {
+
+    ArduinoOTA.begin();
+    
+    ArduinoOTA.onStart([]() {
+        display.clear();
+        display.setFont(ArialMT_Plain_10);
+        display.setTextAlignment(TEXT_ALIGN_CENTER_BOTH);
+        display.drawString(display.getWidth() / 2, display.getHeight() / 2 - 10, "OTA Update");
+        display.display();
+    });
+
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+        display.drawProgressBar(4, 32, 120, 8, progress / (total / 100) );
+        display.display();
+    });
+
+    ArduinoOTA.onEnd([]() {
+        display.clear();
+        display.setFont(ArialMT_Plain_10);
+        display.setTextAlignment(TEXT_ALIGN_CENTER_BOTH);
+        display.drawString(display.getWidth() / 2, display.getHeight() / 2, "Restart");
+        display.display();
+    });
+}
+
+/** ARDUINO OTA SETUP END **/
 
 void setup() {
     Serial.begin(115200);
@@ -691,10 +683,15 @@ void setup() {
     log("Starting Modbus TCP server ...");
     setupModbusServer();
 
+    /*
+    log("Setting up Arduino OTA ...");
+    setupArduinoOTA();
+    */
+
     log("Testing output ports ...");
     testOutputPorts();
 
-    log("Device ready.");
+    log("Ready.");
 }
 
 uint32_t displayUpdateMillis = millis();
@@ -708,7 +705,12 @@ void loop() {
 
     // Update display every 500ms
     if (millis() - displayUpdateMillis > 500) {
-        updateDisplayInfo("Device ready.");
+        updateDisplayInfo("Ready.");
         displayUpdateMillis = millis();
     }
+
+    /*
+    ArduinoOTA.handle();
+    */
+
 }
