@@ -185,9 +185,11 @@ bool checkConnection() {
     return rdy_flag;
 }
 
-void reconnect() {
+void reconnect(bool initial = false) {
 
-    log("Starting Ethernet connection ...");
+    if (initial) log("Starting Ethernet connection ...");
+    else log("Restarting Ethernet connection ...");
+    
 
     WizReset();
 
@@ -607,6 +609,7 @@ void updateDisplayInfo(String text) {
         display.drawStringMaxWidth(0, 6 + 6, w, text);
     }
     
+    /*
     // FOOTER
     display.drawLine(0, h - 22, w, h - 22);
     display.setTextAlignment(TEXT_ALIGN_LEFT);
@@ -614,6 +617,37 @@ void updateDisplayInfo(String text) {
 
     String ip = Ethernet.localIP().toString();
     display.drawString(0, h - 10, "IP: " + ip);
+    */
+
+    // FOOTER
+    String info1 = Ethernet.localIP().toString();
+    String info2 = linkStatusString();
+
+    display.drawLine(0, h - 11, w, h - 11);
+
+    uint16_t info1Width = display.getStringWidth(info1);
+    uint16_t info2Width = display.getStringWidth(info2);
+    if (info1Width + info2Width < w) {
+        // Draw text centered and with divider line
+
+        uint16_t padding = (w - (info1Width + info2Width)) / 2;
+        uint16_t info1PositionX = (info1Width + padding)/2 - 2;
+        uint16_t info2PositionX = info1Width + padding + (info2Width + padding) / 2 + 2;
+
+        display.setTextAlignment(TEXT_ALIGN_CENTER);
+        display.drawStringMaxWidth(info1PositionX, h - 10, info1Width + padding, info1);
+        display.drawStringMaxWidth(info2PositionX, h - 10, info2Width + padding, info2);
+
+        display.drawLine(info1Width + padding, h - 11, info1Width + padding, h);
+    } else {
+        // Just draw left and right aligned
+
+        display.setTextAlignment(TEXT_ALIGN_LEFT);
+        display.drawString(0, h - 10, info1);
+
+        display.setTextAlignment(TEXT_ALIGN_RIGHT);
+        display.drawString(w-1, h - 10, info2);
+    } 
 
     display.display();
 }
@@ -668,7 +702,7 @@ void setup() {
     // Use Ethernet.init(pin) to configure the CS pin.
     Ethernet.init(26);           // GPIO26 on the ESP32.
 
-    reconnect();
+    reconnect(true);
     checkConnection();
 
     log("Starting Modbus TCP server ...");
