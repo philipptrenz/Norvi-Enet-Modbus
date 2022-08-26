@@ -19,6 +19,8 @@
 #include <Wire.h>
 #include "SSD1306Wire.h"
 
+#include "img/boot_logo.h"
+
 #include "local_config.h"   // <--- Change settings for YOUR network here.
 
 
@@ -578,13 +580,9 @@ void setupDisplay() {
     display.setContrast(255);
     display.setFont(ArialMT_Plain_10);
 
-    uint16_t w = display.getWidth();
-    uint16_t h = display.getHeight();
-
-    display.setTextAlignment(TEXT_ALIGN_CENTER_BOTH);
-    // display.drawString(w / 2, 6, "NORVI ENET ModbusTCP");
-    display.drawString(w / 2, 6, "casayohana");
-    display.drawLine(0, 13, w, 13);
+    uint16_t image_x = (display.getWidth() - boot_logo_width) / 2;
+    uint16_t image_y = (display.getHeight() - boot_logo_height) / 2;
+    display.drawFastImage(image_x, image_y, boot_logo_width, boot_logo_height, boot_logo_bits);
 
     display.display();
 }
@@ -601,21 +599,14 @@ void updateDisplayInfo(String text) {
 
     display.clear();
 
-    // HEADER
-    display.setTextAlignment(TEXT_ALIGN_CENTER_BOTH);
-    // display.drawString(w / 2, 6, "NORVI ENET ModbusTCP");
-    display.drawString(w / 2, 6, "casayohana");
-    display.drawLine(0, 13, w, 13);
-
     // LOGGING TEXT
     display.setTextAlignment(TEXT_ALIGN_LEFT);
     if (display.getStringWidth(text) > w) {
-        display.drawStringMaxWidth(0, 14, w, text);
+        display.drawStringMaxWidth(0, 6, w, text);
     } else {
-        display.drawStringMaxWidth(0, 14 + 6, w, text);
+        display.drawStringMaxWidth(0, 6 + 6, w, text);
     }
     
-
     // FOOTER
     display.drawLine(0, h - 22, w, h - 22);
     display.setTextAlignment(TEXT_ALIGN_LEFT);
@@ -665,8 +656,8 @@ void setup() {
     delay(500);
 
     setupDisplay();
-
     Serial.println("\n\tNorvi ENET ModbusTCP\r\n");
+    delay(1000);
 
     log("Setting up IO ports ...");
     setupOutputPorts();
