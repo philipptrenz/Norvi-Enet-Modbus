@@ -1,5 +1,5 @@
 /*
- * Norvi ENET Signal Lights
+ * NORVI ENET AE-06 Modbus TCP Server
  *
  * Using W5500 Ethernet chip, 
  * eModbus library: https://github.com/eModbus/eModbus/blob/7a5f8877e5ee426ae8eca634e96ec1dfd5724209/examples/TCPEthernetServer/main.cpp
@@ -7,21 +7,23 @@
  * 
  * Important: To get it working, line 28 of ~/.platformio/packages/framework-arduinoespressif32/cores/esp32/Server.h 
  * had to be changed from `virtual void begin(uint16_t port=0) =0;` 
- * to `virtual void begin() =0;`
+ * to `virtual void begin() =0;`. See: https://github.com/eModbus/eModbus/issues/129
  * 
  */
 
 #include <Arduino.h>
 #include <SPI.h>
+
 #include <Ethernet.h>
-#include <ArduinoOTA.h>
+#define RESET_P	27
 
 #include <Wire.h>
 #include "SSD1306Wire.h"
 
 #include "img/boot_logo.h"
 
-#include "local_config.h"   // <--- Change settings for YOUR network here.
+#include "config.h"         // <= Adjust for your network configuration
+
 
 
 // Modbus server TCP
@@ -316,8 +318,10 @@ void setupButtonPort() {
     pinMode(gpioButton, INPUT);
 }
 
-uint32_t lastAllButtonsOffMillis = 0;
+
 void buttonReadingLoop() {
+    static uint32_t lastAllButtonsOffMillis = 0;
+
     /*
      * Norvi ENET built-in buttons all are connected to GPIO 36 
      * using different resistor values. Therefore have to be decoded
@@ -325,68 +329,52 @@ void buttonReadingLoop() {
      */
     uint16_t newVal = (uint16_t) analogRead(gpioButton);
 
-    if (newVal > 1300) {
-
-        // Serial.print("Button analog reading: ");
-        // Serial.println(newVal);
-
-        if (newVal < 2000) {
-            buttonStates[0] = ON;
-            buttonStates[1] = OFF;
-            buttonStates[2] = OFF;
-            // Serial.println("Button S1 pressed");
-
-        } else if (newVal < 2450) {
-            buttonStates[0] = OFF;
-            buttonStates[1] = ON;
-            buttonStates[2] = OFF;
-            // Serial.println("Button S2 pressed");
-
-        } else if (newVal < 2950) {
-            buttonStates[0] = ON;
-            buttonStates[1] = ON;
-            buttonStates[2] = OFF;
-            // Serial.println("Button S1 and S2 pressed");
-
-        } else if (newVal < 3280) {
-            buttonStates[0] = OFF;
-            buttonStates[1] = OFF;
-            buttonStates[2] = ON;
-            // Serial.println("Button S3 pressed");
-
-        } else if (newVal < 3380) {
-            buttonStates[0] = ON;
-            buttonStates[1] = OFF;
-            buttonStates[2] = ON;
-            // Serial.println("Button S1 and S3 pressed");
-
-        } else if (newVal < 3460) {
-            buttonStates[0] = OFF;
-            buttonStates[1] = ON;
-            buttonStates[2] = ON;
-            // Serial.println("Button S2 and S3 pressed");
-
-        } else if (newVal < 3800) {
-            buttonStates[0] = ON;
-            buttonStates[1] = ON;
-            buttonStates[2] = ON;
-            // Serial.println("Button S1 and S2 and S3 pressed");
-
-            if (lastAllButtonsOffMillis > 0 && millis() - lastAllButtonsOffMillis > 3*1000) {
-                // If all three buttons are pressed simultaneously for at least three seconds
-                Serial.println("Restart button sequence pressed, restarting ESP ...");
-                ESP.restart();      // Restart ESP32
-            }
-
-        }
-
-
-    } else {
+    if (newVal < 1300) { 
         buttonStates[0] = OFF;
         buttonStates[1] = OFF;
         buttonStates[2] = OFF;
 
         lastAllButtonsOffMillis = millis();
+    } else if (newVal < 2000) {
+        buttonStates[0] = ON;
+        buttonStates[1] = OFF;
+        buttonStates[2] = OFF;
+
+    } else if (newVal < 2450) {
+        buttonStates[0] = OFF;
+        buttonStates[1] = ON;
+        buttonStates[2] = OFF;
+
+    } else if (newVal < 2950) {
+        buttonStates[0] = ON;
+        buttonStates[1] = ON;
+        buttonStates[2] = OFF;
+
+    } else if (newVal < 3280) {
+        buttonStates[0] = OFF;
+        buttonStates[1] = OFF;
+        buttonStates[2] = ON;
+
+    } else if (newVal < 3380) {
+        buttonStates[0] = ON;
+        buttonStates[1] = OFF;
+        buttonStates[2] = ON;
+
+    } else if (newVal < 3460) {
+        buttonStates[0] = OFF;
+        buttonStates[1] = ON;
+        buttonStates[2] = ON;
+
+    } else if (newVal < 3800) {
+        buttonStates[0] = ON;
+        buttonStates[1] = ON;
+        buttonStates[2] = ON;
+
+        // Pressing all three buttons simultaneously for more than 3 seconds restarts the ESP
+        if (lastAllButtonsOffMillis > 0 && millis() - lastAllButtonsOffMillis > 3 * 1000) {
+            Serial.println("Restart button sequence pressed, restarting ESP ...");
+            ESP.restart();
+        }
     }
 }
 
@@ -396,12 +384,12 @@ void buttonReadingLoop() {
 ModbusServerEthernet MBserver;
 
 ModbusMessage HANDLE_READ_HOLD_REGISTER(ModbusMessage request) {
-    // Serial.println(request);
-    ModbusMessage response; // The Modbus message we are going to give back
-    uint16_t addr = 0;      // Start address
-    uint16_t words = 0;     // # of words requested
-    request.get(2, addr);   // read address from request
-    request.get(4, words);  // read # of words from request
+
+    ModbusMessage response;     // The Modbus message we are going to give back
+    uint16_t addr = 0;          // Start address
+    uint16_t words = 0;         // # of words requested
+    request.get(2, addr);       // read address from request
+    request.get(4, words);      // read # of words from request
 
     // Address overflow?
     if ((addr + words) > numHoldingRegisters) {
@@ -424,12 +412,12 @@ ModbusMessage HANDLE_READ_HOLD_REGISTER(ModbusMessage request) {
 }
 
 ModbusMessage HANDLE_WRITE_HOLD_REGISTER(ModbusMessage request) {
-    // Serial.println(request);
-    ModbusMessage response; // The Modbus message we are going to give back
-    uint16_t addr = 0;      // Start address
-    uint16_t value = 0;     // Register value
-    request.get(2, addr);   // read address from request
-    request.get(4, value);  // read received value
+
+    ModbusMessage response;     // The Modbus message we are going to give back
+    uint16_t addr = 0;          // Start address
+    uint16_t value = 0;         // Register value
+    request.get(2, addr);       // read address from request
+    request.get(4, value);      // read received value
 
     // Address overflow?
     if (addr > numHoldingRegisters) {
@@ -465,10 +453,10 @@ ModbusMessage HANDLE_WRITE_HOLD_REGISTER(ModbusMessage request) {
 }
 
 ModbusMessage HANDLE_WRITE_MULT_REGISTERS(ModbusMessage request) {
-    // Serial.println(request);
-    ModbusMessage response; // The Modbus message we are going to give back
-    uint16_t addr = 0;      // Start address
-    uint16_t quantity = 0;     // Quantity of registers
+
+    ModbusMessage response;     // The Modbus message we are going to give back
+    uint16_t addr = 0;          // Start address
+    uint16_t quantity = 0;      // Quantity of registers
     uint16_t byteCount = 0;     // Byte count
     request.get(2, addr);
     request.get(4, quantity);
@@ -608,16 +596,6 @@ void updateDisplayInfo(String text) {
     } else {
         display.drawStringMaxWidth(0, 6 + 6, w, text);
     }
-    
-    /*
-    // FOOTER
-    display.drawLine(0, h - 22, w, h - 22);
-    display.setTextAlignment(TEXT_ALIGN_LEFT);
-    display.drawString(0, h - 21, "Link: " + linkStatusString());
-
-    String ip = Ethernet.localIP().toString();
-    display.drawString(0, h - 10, "IP: " + ip);
-    */
 
     // FOOTER
     String info1 = Ethernet.localIP().toString();
@@ -654,37 +632,6 @@ void updateDisplayInfo(String text) {
 
 /** DISPLAY END **/
 
-
-/** ARDUINO OTA SETUP **/
-
-void setupArduinoOTA() {
-
-    ArduinoOTA.begin();
-    
-    ArduinoOTA.onStart([]() {
-        display.clear();
-        display.setFont(ArialMT_Plain_10);
-        display.setTextAlignment(TEXT_ALIGN_CENTER_BOTH);
-        display.drawString(display.getWidth() / 2, display.getHeight() / 2 - 10, "OTA Update");
-        display.display();
-    });
-
-    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-        display.drawProgressBar(4, 32, 120, 8, progress / (total / 100) );
-        display.display();
-    });
-
-    ArduinoOTA.onEnd([]() {
-        display.clear();
-        display.setFont(ArialMT_Plain_10);
-        display.setTextAlignment(TEXT_ALIGN_CENTER_BOTH);
-        display.drawString(display.getWidth() / 2, display.getHeight() / 2, "Restart");
-        display.display();
-    });
-}
-
-/** ARDUINO OTA SETUP END **/
-
 void setup() {
     Serial.begin(115200);
     delay(500);
@@ -699,8 +646,7 @@ void setup() {
     setupButtonPort();
 
     log("Setting up Ethernet ...");
-    // Use Ethernet.init(pin) to configure the CS pin.
-    Ethernet.init(26);           // GPIO26 on the ESP32.
+    Ethernet.init(26); // GPIO26 on the ESP32.
 
     reconnect(true);
     checkConnection();
@@ -733,9 +679,4 @@ void loop() {
         updateDisplayInfo("Ready.");
         displayUpdateMillis = millis();
     }
-
-    /*
-    ArduinoOTA.handle();
-    */
-
 }
