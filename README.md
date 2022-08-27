@@ -18,14 +18,14 @@ In fact, with stability and maintenance in mind, the original intention was to b
 
 I also did some research to add Ethernet functionality using the W5500 chip at ESPHome \[[2](https://github.com/esphome/feature-requests/issues/1235#issuecomment-1169079495)\], but without support from the ESPHome community, the implementation was technically and temporally out of scope.
 
-So, in the end, implementing the functionality by hand and without using an IoT platform was the best way to go.
+So, in the end, implementing the functionality by hand without using an IoT platform was the best way to go.
 
 
 ## Important note for compiling
 
-A change introduced to `Server.h` in the [Arduino Core for ESP32](https://github.com/espressif/arduino-esp32) breaks compatiblity to certain libraries, including the [eModbus](https://github.com/eModbus/eModbus) used here. The current, ugly, workaround is to change line 28 of `Server.h` from `virtual void begin(uint16_t port=0) =0;` to `virtual void begin() =0;` \[[3](https://github.com/arduino-libraries/Ethernet/issues/88#issuecomment-455498941)\].
+A change introduced to `Server.h` in the [Arduino Core for ESP32](https://github.com/espressif/arduino-esp32) breaks compatibility to certain libraries, including the [eModbus](https://github.com/eModbus/eModbus) used in this project. The current, ugly, workaround is to change line 28 of `Server.h` from `virtual void begin(uint16_t port=0) =0;` to `virtual void begin() =0;` \[[3](https://github.com/arduino-libraries/Ethernet/issues/88#issuecomment-455498941)\].
 
-On my system, `Server.h` is located at `~/.platformio/packages/framework-arduinoespressif32/cores/esp32/Server.h`.
+On my system, `Server.h` is located at `~/.platformio/packages/framework-arduinoespressif32/cores/esp32/`.
  
 
 ## Configurations
