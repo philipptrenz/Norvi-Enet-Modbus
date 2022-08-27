@@ -19,6 +19,12 @@ I also did some research to add Ethernet functionality using the W5500 chip at E
 So, in the end, implementing the functionality myself without using an IoT platform was the best way to go.
 
 
+## Important note for compiling
+
+A change introduced to `Server.h` in the [Arduino Core for ESP32](https://github.com/espressif/arduino-esp32) breaks compatiblity to certain libraries, including the [eModbus](https://github.com/eModbus/eModbus) used here. The current, ugly, workaround is to change line 28 of `Server.h` from `virtual void begin(uint16_t port=0) =0;` to `virtual void begin() =0;` \[[3](https://github.com/arduino-libraries/Ethernet/issues/88#issuecomment-455498941)\]. 
+On my system, `Server.h` is located at `~/.platformio/packages/framework-arduinoespressif32/cores/esp32/Server.h`.
+ 
+
 ## Configurations
 
 Currently, only the wired Ethernet connection is used. Adapting `src/main.cpp` to use `WiFi.h` should be straight forward, though.

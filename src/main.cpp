@@ -4,11 +4,6 @@
  * Using W5500 Ethernet chip, 
  * eModbus library: https://github.com/eModbus/eModbus/blob/7a5f8877e5ee426ae8eca634e96ec1dfd5724209/examples/TCPEthernetServer/main.cpp
  * 
- * 
- * Important: To get it working, line 28 of ~/.platformio/packages/framework-arduinoespressif32/cores/esp32/Server.h 
- * had to be changed from `virtual void begin(uint16_t port=0) =0;` 
- * to `virtual void begin() =0;`. See: https://github.com/eModbus/eModbus/issues/129
- * 
  */
 
 #include <Arduino.h>
