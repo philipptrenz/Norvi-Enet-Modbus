@@ -12,17 +12,15 @@
 #include <Ethernet.h>
 #define RESET_P	27
 
+#include "ModbusServerEthernet.h"
+
 #include <Wire.h>
 #include "SSD1306Wire.h"
 
-#include "img/boot_logo.h"
 
+#include "img/boot_logo.h"
 #include "config.h"         // <= Adjust for your network configuration
 
-
-
-// Modbus server TCP
-#include "ModbusServerEthernet.h"
 
 
 enum RegisterStatus: uint16_t { 
@@ -76,25 +74,10 @@ RegisterStatus buttonStates[] = {
     OFF,      // S3
 };
 
-/* OUTPUT PORTS ERROR AND DEFAULT STATE CONFIG */
 
-enum DeviceStatus: uint16_t { 
-    DEVICE_OK = 10, 
-    ETH_DISCONNECTED = 11, 
-    ETH_CONNECTING = 12, 
-    DEVICE_ERROR = 13 
-};
-
-
-// SSD1306 display configuration (128x64):
+// SSD1306 display configuration (128x64 pixels):
 SSD1306Wire display(0x3c, 16, 17);  // ADDRESS, SDA, SCL
 
-void flash(int gpio_pin, int duration=300, int pause=150) {
-    digitalWrite(gpio_pin, HIGH);
-    delay(duration);
-    digitalWrite(gpio_pin, LOW);
-    delay(pause);     
-}
 
 void log(String text);
 void updateDisplayInfo(String text);
@@ -165,16 +148,10 @@ bool checkConnection() {
         }
     }
     if (!rdy_flag) {
-
         Serial.println("\n\rHardware fault, or cable issue:");
         Serial.println("\tHardware: " + hardwareStatusString());
         Serial.println("\tLink: " + linkStatusString());
         Serial.println("\tIP: " + Ethernet.localIP().toString());
-        for (uint8_t i = 0; i < 50; i++) {
-            delay(100);          // Halt.
-        }
-
-        Serial.println("Could not connect to network.");
     } else {
         Serial.println(" Ok.");
     }
@@ -187,7 +164,6 @@ void reconnect(bool initial = false) {
     if (initial) log("Starting Ethernet connection ...");
     else log("Restarting Ethernet connection ...");
     
-
     WizReset();
 
     /* 
@@ -246,6 +222,13 @@ void setupOutputPorts() {
     for (int i = 0; i < numHoldingRegisters; i++) {
         pinMode(gpioOutPorts[i], OUTPUT);
     }
+}
+
+void flash(int gpio_pin, int duration=300, int pause=150) {
+    digitalWrite(gpio_pin, HIGH);
+    delay(duration);
+    digitalWrite(gpio_pin, LOW);
+    delay(pause);     
 }
 
 void testOutputPorts() {
@@ -541,7 +524,7 @@ void setupModbusServer() {
     MBserver.registerWorker(1, READ_INPUT_REGISTER, &HANDLE_READ_INPUT_REGISTER);        // FC=04 for serverID=1
     
     // Start the server
-    MBserver.start(502, 2, 20000);
+    MBserver.start(502, 2, 20000);  // PORT, MAXIMUM NUMBER OF CLIENTS, TIMEOUT IN MS
 }
 
 void modbusLoop() {
@@ -632,7 +615,7 @@ void setup() {
     delay(500);
 
     setupDisplay();
-    Serial.println("\n\tNorvi ENET ModbusTCP\r\n");
+    Serial.println("\nNORVI ENET AE-06 Modbus TCP Server\r\n");
     delay(1000);
 
     log("Setting up IO ports ...");
@@ -641,18 +624,13 @@ void setup() {
     setupButtonPort();
 
     log("Setting up Ethernet ...");
-    Ethernet.init(26); // GPIO26 on the ESP32.
+    Ethernet.init(26); // GPIO26 on the NORVI ENET AE-06-T.
 
     reconnect(true);
     checkConnection();
 
     log("Starting Modbus TCP server ...");
     setupModbusServer();
-
-    /*
-    log("Setting up Arduino OTA ...");
-    setupArduinoOTA();
-    */
 
     log("Testing output ports ...");
     testOutputPorts();
