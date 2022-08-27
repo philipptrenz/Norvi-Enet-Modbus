@@ -15,7 +15,7 @@ The idea behind this project is to use the NORVI ENET as a "dumb" translator of 
 ## Why not build upon an existing IoT platform?
 
 In fact, with stability and maintenance in mind, the original intention was to build on one of the existing IoT projects for the ESP32, such as [Tasmota](https://github.com/arendst/Tasmota), [ESPEasy](https://github.com/letscontrolit/ESPEasy), and [ESPHome](https://github.com/esphome/esphome). However, it quickly became clear that none of the projects were compatible with the W5500 Ethernet chip used in the NORVI ENET.
-I also did some research to add Ethernet functionality using the W5500 chip at ESPHome [2](https://github.com/esphome/feature-requests/issues/1235#issuecomment-1169079495), but without support from the ESPHome community, the implementation was technically and temporally out of scope for me.
+I also did some research to add Ethernet functionality using the W5500 chip at ESPHome \[[2](https://github.com/esphome/feature-requests/issues/1235#issuecomment-1169079495)\], but without support from the ESPHome community, the implementation was technically and temporally out of scope for me.
 So, in the end, implementing the functionality myself without using an IoT platform was the best way to go.
 
 
